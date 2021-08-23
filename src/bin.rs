@@ -1,5 +1,3 @@
-#![feature(with_options)]
-
 use std::{env, fs, io};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
@@ -8,10 +6,10 @@ use std::time::Instant;
 use clap::{AppSettings, clap_app};
 use file_size;
 
-use nod::Result;
 use nod::disc::{new_disc_base, PartReadStream};
 use nod::fst::NodeType;
 use nod::io::{has_extension, new_disc_io};
+use nod::Result;
 
 fn main() -> Result<()> {
     let matches = clap_app!(nodtool =>

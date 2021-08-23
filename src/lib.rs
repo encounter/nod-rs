@@ -26,8 +26,6 @@
 //!     println!(s);
 //! }
 //! ```
-#![feature(seek_stream_len)]
-
 pub mod fst;
 pub mod disc;
 pub mod io;

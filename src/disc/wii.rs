@@ -361,7 +361,7 @@ impl<'a> Seek for WiiPartReadStream<'a> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         self.offset = match pos {
             SeekFrom::Start(v) => v,
-            SeekFrom::End(v) => (self.stream_len()? as i64 + v) as u64,
+            SeekFrom::End(v) => (self.stable_stream_len()? as i64 + v) as u64,
             SeekFrom::Current(v) => (self.offset as i64 + v) as u64,
         };
         let block = self.offset / BLOCK_SIZE as u64;
@@ -372,16 +372,16 @@ impl<'a> Seek for WiiPartReadStream<'a> {
         io::Result::Ok(self.offset)
     }
 
-    fn stream_len(&mut self) -> io::Result<u64> {
-        io::Result::Ok(to_block_size(self.stream.stream_len()?))
-    }
-
     fn stream_position(&mut self) -> io::Result<u64> {
         io::Result::Ok(self.offset)
     }
 }
 
-impl<'a> ReadStream for WiiPartReadStream<'a> {}
+impl<'a> ReadStream for WiiPartReadStream<'a> {
+    fn stable_stream_len(&mut self) -> io::Result<u64> {
+        io::Result::Ok(to_block_size(self.stream.stable_stream_len()?))
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, BinRead)]
 pub(crate) struct WiiPartition {

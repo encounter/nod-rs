@@ -15,9 +15,22 @@ macro_rules! array_ref {
     }}
 }
 
-pub trait ReadStream: Read + Seek {}
+pub trait ReadStream: Read + Seek {
+    /// Replace with [`Read.stream_len`] when stabilized.
+    ///
+    /// <https://github.com/rust-lang/rust/issues/59359>
+    fn stable_stream_len(&mut self) -> io::Result<u64>;
+}
 
-impl ReadStream for File {}
+impl ReadStream for File {
+    fn stable_stream_len(&mut self) -> io::Result<u64> {
+        let before = self.stream_position()?;
+        let result = self.seek(SeekFrom::End(0));
+        // Try to restore position even if the above failed
+        self.seek(SeekFrom::Start(before))?;
+        result
+    }
+}
 
 trait WindowedReadStream: ReadStream {
     fn base_stream(&mut self) -> &mut dyn ReadStream;
@@ -39,7 +52,7 @@ pub struct SharedWindowedReadStream<'a> {
 #[inline(always)]
 fn windowed_read(stream: &mut dyn WindowedReadStream, buf: &mut [u8]) -> io::Result<usize> {
     let pos = stream.stream_position()?;
-    let size = stream.stream_len()?;
+    let size = stream.stable_stream_len()?;
     stream.base_stream().read(if pos + buf.len() as u64 > size {
         &mut buf[..(size - pos) as usize]
     } else {
@@ -73,16 +86,16 @@ impl<'a> Seek for OwningWindowedReadStream<'a> {
         windowed_seek(self, pos)
     }
 
-    fn stream_len(&mut self) -> io::Result<u64> {
-        Result::Ok(self.end - self.begin)
-    }
-
     fn stream_position(&mut self) -> io::Result<u64> {
         Result::Ok(self.base.stream_position()? - self.begin)
     }
 }
 
-impl<'a> ReadStream for OwningWindowedReadStream<'a> {}
+impl<'a> ReadStream for OwningWindowedReadStream<'a> {
+    fn stable_stream_len(&mut self) -> io::Result<u64> {
+        Result::Ok(self.end - self.begin)
+    }
+}
 
 impl<'a> WindowedReadStream for OwningWindowedReadStream<'a> {
     fn base_stream(&mut self) -> &mut dyn ReadStream {
@@ -105,16 +118,16 @@ impl<'a> Seek for SharedWindowedReadStream<'a> {
         windowed_seek(self, pos)
     }
 
-    fn stream_len(&mut self) -> io::Result<u64> {
-        Result::Ok(self.end - self.begin)
-    }
-
     fn stream_position(&mut self) -> io::Result<u64> {
         Result::Ok(self.base.stream_position()? - self.begin)
     }
 }
 
-impl<'a> ReadStream for SharedWindowedReadStream<'a> {}
+impl<'a> ReadStream for SharedWindowedReadStream<'a> {
+    fn stable_stream_len(&mut self) -> io::Result<u64> {
+        Result::Ok(self.end - self.begin)
+    }
+}
 
 impl<'a> WindowedReadStream for SharedWindowedReadStream<'a> {
     fn base_stream(&mut self) -> &mut dyn ReadStream {

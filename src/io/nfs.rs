@@ -211,7 +211,7 @@ impl<'a> Seek for NFSReadStream<'a> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         self.offset = match pos {
             SeekFrom::Start(v) => v,
-            SeekFrom::End(v) => (self.stream_len()? as i64 + v) as u64,
+            SeekFrom::End(v) => (self.stable_stream_len()? as i64 + v) as u64,
             SeekFrom::Current(v) => (self.offset as i64 + v) as u64,
         };
         self.set_logical_addr(self.offset)
@@ -222,16 +222,16 @@ impl<'a> Seek for NFSReadStream<'a> {
         io::Result::Ok(self.offset)
     }
 
-    fn stream_len(&mut self) -> io::Result<u64> {
-        todo!()
-    }
-
     fn stream_position(&mut self) -> io::Result<u64> {
         io::Result::Ok(self.offset)
     }
 }
 
-impl<'a> ReadStream for NFSReadStream<'a> {}
+impl<'a> ReadStream for NFSReadStream<'a> {
+    fn stable_stream_len(&mut self) -> io::Result<u64> {
+        todo!()
+    }
+}
 
 impl DiscIO for DiscIONFS {
     fn begin_read_stream(&self, offset: u64) -> io::Result<Box<dyn ReadStream + '_>> {
