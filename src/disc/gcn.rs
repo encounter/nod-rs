@@ -100,13 +100,7 @@ impl<'a> ReadStream for GCPartReadStream<'a> {
 impl<'a> PartReadStream for GCPartReadStream<'a> {
     fn begin_file_stream(&mut self, node: &Node) -> io::Result<SharedWindowedReadStream> {
         assert_eq!(node.kind, NodeKind::File);
-        let offset = node.offset as u64;
-        self.seek(SeekFrom::Start(offset))?;
-        io::Result::Ok(SharedWindowedReadStream {
-            base: self,
-            begin: offset,
-            end: offset + node.length as u64,
-        })
+        io::Result::Ok(self.new_window(node.offset as u64, node.length as u64)?)
     }
 
     fn read_header(&mut self) -> Result<Box<dyn PartHeader>> {

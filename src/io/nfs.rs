@@ -167,9 +167,9 @@ impl<'a> NFSReadStream<'a> {
         let iv: [u8; 16] = [
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             (phys_addr.l_block & 0xFF) as u8,
-            ((phys_addr.l_block >> 2) & 0xFF) as u8,
-            ((phys_addr.l_block >> 4) & 0xFF) as u8,
-            ((phys_addr.l_block >> 6) & 0xFF) as u8,
+            ((phys_addr.l_block >> 8) & 0xFF) as u8,
+            ((phys_addr.l_block >> 16) & 0xFF) as u8,
+            ((phys_addr.l_block >> 24) & 0xFF) as u8,
         ];
         Aes128Cbc::new(self.crypto.clone(), &iv.into())
             .decrypt(&mut self.buf)?;

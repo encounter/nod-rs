@@ -1,4 +1,4 @@
-# nod-rs [![Build Status]][actions] [![Latest Version]][crates.io] [![Api Rustdoc]][rustdoc] [![Rust](https://img.shields.io/badge/rust-1.51%2B-blue.svg?maxAge=3600)](https://github.com/encounter/nod-rs)
+# nod-rs [![Build Status]][actions] [![Latest Version]][crates.io] [![Api Rustdoc]][rustdoc] ![Rust Version]
 
 [Build Status]: https://github.com/encounter/nod-rs/workflows/build/badge.svg
 [actions]: https://github.com/encounter/nod-rs/actions
@@ -6,6 +6,7 @@
 [crates.io]: https://crates.io/crates/nod
 [Api Rustdoc]: https://img.shields.io/badge/api-rustdoc-blue.svg
 [rustdoc]: https://docs.rs/nod
+[Rust Version]: https://img.shields.io/badge/rust-1.51+-blue.svg?maxAge=3600
 
 Library for traversing & reading GameCube and Wii disc images.
 

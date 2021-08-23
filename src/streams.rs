@@ -20,6 +20,18 @@ pub trait ReadStream: Read + Seek {
     ///
     /// <https://github.com/rust-lang/rust/issues/59359>
     fn stable_stream_len(&mut self) -> io::Result<u64>;
+
+    /// Creates a windowed read sub-stream with offset and size.
+    ///
+    /// Seeks underlying stream immediately.
+    fn new_window(&mut self, offset: u64, size: u64) -> io::Result<SharedWindowedReadStream> where Self: Sized {
+        self.seek(SeekFrom::Start(offset))?;
+        io::Result::Ok(SharedWindowedReadStream {
+            base: self,
+            begin: offset,
+            end: offset + size,
+        })
+    }
 }
 
 impl ReadStream for File {
@@ -38,15 +50,25 @@ trait WindowedReadStream: ReadStream {
 }
 
 pub struct OwningWindowedReadStream<'a> {
-    pub(crate) base: Box<dyn ReadStream + 'a>,
-    pub(crate) begin: u64,
-    pub(crate) end: u64,
+    pub base: Box<dyn ReadStream + 'a>,
+    pub begin: u64,
+    pub end: u64,
+}
+
+/// Takes ownership of & wraps a read stream into a windowed read stream.
+pub fn wrap_windowed<'a>(mut base: Box<dyn ReadStream + 'a>, offset: u64, size: u64) -> io::Result<OwningWindowedReadStream<'a>> {
+    base.seek(SeekFrom::Start(offset))?;
+    io::Result::Ok(OwningWindowedReadStream {
+        base,
+        begin: offset,
+        end: offset + size,
+    })
 }
 
 pub struct SharedWindowedReadStream<'a> {
-    pub(crate) base: &'a mut dyn ReadStream,
-    pub(crate) begin: u64,
-    pub(crate) end: u64,
+    pub base: &'a mut dyn ReadStream,
+    pub begin: u64,
+    pub end: u64,
 }
 
 #[inline(always)]

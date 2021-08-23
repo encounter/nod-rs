@@ -8,7 +8,7 @@ use sha1::{digest, Digest, Sha1};
 use crate::disc::{BI2Header, BUFFER_SIZE, DiscBase, DiscIO, Header, PartHeader, PartReadStream};
 use crate::{Error, div_rem, Result, array_ref};
 use crate::fst::{find_node, Node, NodeKind, NodeType, node_parser};
-use crate::streams::{OwningWindowedReadStream, ReadStream, SharedWindowedReadStream};
+use crate::streams::{OwningWindowedReadStream, ReadStream, SharedWindowedReadStream, wrap_windowed};
 
 type Aes128Cbc = Cbc<Aes128, NoPadding>;
 
@@ -218,11 +218,10 @@ impl DiscBase for DiscWii {
             .ok_or(Error::DiscFormat("Failed to locate data partition".to_string()))?;
         let data_off = part.part_header.data_off;
         let result = Box::new(WiiPartReadStream {
-            stream: OwningWindowedReadStream {
-                base: disc_io.begin_read_stream(data_off)?,
-                begin: data_off,
-                end: data_off + part.part_header.data_size,
-            },
+            stream: wrap_windowed(
+                disc_io.begin_read_stream(data_off)?,
+                data_off, part.part_header.data_size,
+            )?,
             crypto: if disc_io.has_wii_crypto() {
                 Aes128::new(&part.part_header.ticket.enc_key.into()).into()
             } else { Option::None },
@@ -247,13 +246,7 @@ struct WiiPartReadStream<'a> {
 impl<'a> PartReadStream for WiiPartReadStream<'a> {
     fn begin_file_stream(&mut self, node: &Node) -> io::Result<SharedWindowedReadStream> {
         assert_eq!(node.kind, NodeKind::File);
-        let offset = (node.offset as u64) << 2;
-        self.seek(SeekFrom::Start(offset))?;
-        io::Result::Ok(SharedWindowedReadStream {
-            base: self,
-            begin: offset,
-            end: offset + node.length as u64,
-        })
+        io::Result::Ok(self.new_window((node.offset as u64) << 2, node.length as u64)?)
     }
 
     fn read_header(&mut self) -> Result<Box<dyn PartHeader>> {
