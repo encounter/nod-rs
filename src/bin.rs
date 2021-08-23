@@ -1,7 +1,6 @@
 use std::{env, fs, io};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use clap::{AppSettings, clap_app};
 use file_size;
@@ -67,13 +66,10 @@ fn extract_node(node: &NodeType, partition: &mut dyn PartReadStream, base_path: 
         NodeType::File(v) => {
             let mut file_path = base_path.to_owned();
             file_path.push(v.name.as_ref());
-            print!("Extracted {}", file_path.to_string_lossy());
-            let now = Instant::now();
+            println!("Extracting {} (size: {})", file_path.to_string_lossy(), file_size::fit_4(v.length as u64));
             let file = fs::File::create(file_path)?;
             let mut buf_writer = BufWriter::with_capacity(partition.ideal_buffer_size(), file);
             io::copy(&mut partition.begin_file_stream(v)?, &mut buf_writer)?;
-            let elapsed = now.elapsed();
-            println!(" (time: {:.2?}, size: {})", elapsed, file_size::fit_4(v.length as u64));
         }
         NodeType::Directory(v, c) => {
             if v.name.is_empty() {
