@@ -8,7 +8,7 @@ jobs:
     strategy:
       matrix:
         platform: [ ubuntu-latest, macos-latest, windows-latest ]
-        toolchain: [ stable, 1.35.0, nightly ]
+        toolchain: [ stable, 1.51.0, nightly ]
       fail-fast: false
     runs-on: ${{ matrix.platform }}
     steps:

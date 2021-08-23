@@ -1,4 +1,4 @@
-# nod-rs [![Build Status]][actions] [![Latest Version]][crates.io] [![Api Rustdoc]][rustdoc] [![Rust](https://img.shields.io/badge/rust-1.35%2B-blue.svg?maxAge=3600)](https://github.com/eqrion/cbindgen)
+# nod-rs [![Build Status]][actions] [![Latest Version]][crates.io] [![Api Rustdoc]][rustdoc] [![Rust](https://img.shields.io/badge/rust-1.51%2B-blue.svg?maxAge=3600)](https://github.com/eqrion/cbindgen)
 
 [Build Status]: https://github.com/encounter/nod-rs/workflows/build/badge.svg
 [actions]: https://github.com/encounter/nod-rs/actions

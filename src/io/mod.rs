@@ -24,7 +24,9 @@ pub trait DiscIO {
 #[inline(always)]
 pub fn has_extension(filename: &Path, extension: &str) -> bool {
     if let Some(ext) = filename.extension() {
-        ext.eq_ignore_ascii_case(extension)
+        // TODO use with Rust 1.53+
+        // ext.eq_ignore_ascii_case(extension)
+        ext.to_str().unwrap_or("").eq_ignore_ascii_case(extension)
     } else { false }
 }
 
