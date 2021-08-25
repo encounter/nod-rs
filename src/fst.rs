@@ -2,7 +2,7 @@
 
 use std::io::{Read, Seek, SeekFrom};
 
-use binread::{derive_binread, NullString, prelude::*, ReadOptions};
+use binread::{derive_binread, prelude::*, NullString, ReadOptions};
 use encoding_rs::SHIFT_JIS;
 
 /// File system node kind.
@@ -64,7 +64,13 @@ fn read_node<R: Read + Seek>(reader: &mut R, ro: &ReadOptions, i: &mut u32) -> B
     })
 }
 
-fn read_node_name<R: Read + Seek>(reader: &mut R, ro: &ReadOptions, base: u64, node: &mut NodeType, root: bool) -> BinResult<()> {
+fn read_node_name<R: Read + Seek>(
+    reader: &mut R,
+    ro: &ReadOptions,
+    base: u64,
+    node: &mut NodeType,
+    root: bool,
+) -> BinResult<()> {
     let mut decode_name = |v: &mut Node| -> BinResult<()> {
         if !root {
             let offset = base + v.name_offset as u64;
@@ -82,7 +88,9 @@ fn read_node_name<R: Read + Seek>(reader: &mut R, ro: &ReadOptions, base: u64, n
         BinResult::Ok(())
     };
     match node {
-        NodeType::File(v) => { decode_name(v)?; }
+        NodeType::File(v) => {
+            decode_name(v)?;
+        }
         NodeType::Directory(v, c) => {
             decode_name(v)?;
             for x in c {
@@ -93,7 +101,11 @@ fn read_node_name<R: Read + Seek>(reader: &mut R, ro: &ReadOptions, base: u64, n
     BinResult::Ok(())
 }
 
-pub(crate) fn node_parser<R: Read + Seek>(reader: &mut R, ro: &ReadOptions, _: ()) -> BinResult<NodeType> {
+pub(crate) fn node_parser<R: Read + Seek>(
+    reader: &mut R,
+    ro: &ReadOptions,
+    _: (),
+) -> BinResult<NodeType> {
     let mut node = read_node(reader, ro, &mut 0)?;
     let base = reader.stream_position()?;
     read_node_name(reader, ro, base, &mut node, true)?;
@@ -103,7 +115,9 @@ pub(crate) fn node_parser<R: Read + Seek>(reader: &mut R, ro: &ReadOptions, _: (
 fn matches_name(node: &NodeType, name: &str) -> bool {
     match node {
         NodeType::File(v) => v.name.as_ref().eq_ignore_ascii_case(name),
-        NodeType::Directory(v, _) => v.name.is_empty() /* root */ || v.name.as_ref().eq_ignore_ascii_case(name),
+        NodeType::Directory(v, _) => {
+            v.name.is_empty() /* root */ || v.name.as_ref().eq_ignore_ascii_case(name)
+        }
     }
 }
 
@@ -114,11 +128,7 @@ pub(crate) fn find_node<'a>(mut node: &'a NodeType, path: &str) -> Option<&'a No
         if matches_name(node, current.unwrap()) {
             match node {
                 NodeType::File(_) => {
-                    return if split.next().is_none() {
-                        Option::Some(node)
-                    } else {
-                        Option::None
-                    };
+                    return if split.next().is_none() { Option::Some(node) } else { Option::None };
                 }
                 NodeType::Directory(v, c) => {
                     // Find child

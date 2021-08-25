@@ -1,11 +1,11 @@
 use std::fs::File;
 use std::io::{Seek, SeekFrom};
 use std::io;
-use std::path::{PathBuf, Path};
+use std::path::{Path, PathBuf};
 
 use crate::io::DiscIO;
-use crate::streams::ReadStream;
 use crate::Result;
+use crate::streams::ReadStream;
 
 pub(crate) struct DiscIOISO {
     pub(crate) filename: PathBuf,

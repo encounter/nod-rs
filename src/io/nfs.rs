@@ -1,13 +1,15 @@
-use std::{fs::File, io, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}};
+use std::{
+    fs::File,
+    io,
+    io::{Read, Seek, SeekFrom},
+    path::{Path, PathBuf},
+};
 
 use aes::{Aes128, NewBlockCipher};
 use binread::{derive_binread, prelude::*};
 use block_modes::{block_padding::NoPadding, BlockMode, Cbc};
 
-use crate::disc::{BUFFER_SIZE};
-use crate::io::DiscIO;
-use crate::{Error,Result};
-use crate::streams::ReadStream;
+use crate::{disc::BUFFER_SIZE, io::DiscIO, streams::ReadStream, Error, Result};
 
 type Aes128Cbc = Cbc<Aes128, NoPadding>;
 
@@ -39,18 +41,18 @@ pub(crate) struct FBO {
     pub(crate) offset: u32,
 }
 
-pub(crate) fn fbo_max() -> FBO {
-    FBO {
-        file: u32::MAX,
-        block: u32::MAX,
-        l_block: u32::MAX,
-        offset: u32::MAX,
+impl Default for FBO {
+    fn default() -> Self {
+        FBO { file: u32::MAX, block: u32::MAX, l_block: u32::MAX, offset: u32::MAX }
     }
 }
 
 impl NFSHeader {
     pub(crate) fn calculate_num_files(&self) -> u32 {
-        let total_block_count = self.lba_ranges.iter().take(self.lba_range_count as usize)
+        let total_block_count = self
+            .lba_ranges
+            .iter()
+            .take(self.lba_range_count as usize)
             .fold(0u32, |acc, range| acc + range.num_blocks);
         (((total_block_count as u64) * 0x8000u64 + (0x200u64 + 0xF9FFFFFu64)) / 0xFA00000u64) as u32
     }
@@ -68,14 +70,9 @@ impl NFSHeader {
             physical_block += range.num_blocks;
         }
         if block == u32::MAX {
-            fbo_max()
+            FBO::default()
         } else {
-            FBO {
-                file: block / 8000,
-                block: block % 8000,
-                l_block: block_div,
-                offset: block_off,
-            }
+            FBO { file: block / 8000, block: block % 8000, l_block: block_div, offset: block_off }
         }
     }
 }
@@ -87,11 +84,8 @@ pub(crate) struct DiscIONFS {
 }
 
 pub(crate) fn new_disc_io_nfs(directory: &Path) -> Result<DiscIONFS> {
-    let mut disc_io = DiscIONFS {
-        directory: directory.to_owned(),
-        key: [0; 16],
-        header: Option::None,
-    };
+    let mut disc_io =
+        DiscIONFS { directory: directory.to_owned(), key: [0; 16], header: Option::None };
     disc_io.validate_files()?;
     Result::Ok(disc_io)
 }
@@ -124,9 +118,10 @@ impl<'a> NFSReadStream<'a> {
 
     fn set_cur_block(&mut self, cur_block: u32) -> io::Result<()> {
         self.cur_block = cur_block;
-        self.file.as_ref().unwrap().seek(
-            SeekFrom::Start(self.cur_block as u64 * BUFFER_SIZE as u64 + 0x200u64)
-        )?;
+        self.file
+            .as_ref()
+            .unwrap()
+            .seek(SeekFrom::Start(self.cur_block as u64 * BUFFER_SIZE as u64 + 0x200u64))?;
         io::Result::Ok(())
     }
 
@@ -164,6 +159,7 @@ impl<'a> NFSReadStream<'a> {
         }
 
         // Decrypt
+        #[rustfmt::skip]
         let iv: [u8; 16] = [
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             (phys_addr.l_block & 0xFF) as u8,
@@ -171,8 +167,7 @@ impl<'a> NFSReadStream<'a> {
             ((phys_addr.l_block >> 16) & 0xFF) as u8,
             ((phys_addr.l_block >> 24) & 0xFF) as u8,
         ];
-        Aes128Cbc::new(self.crypto.clone(), &iv.into())
-            .decrypt(&mut self.buf)?;
+        Aes128Cbc::new(self.crypto.clone(), &iv.into()).decrypt(&mut self.buf)?;
 
         Result::Ok(())
     }
@@ -188,7 +183,8 @@ impl<'a> Read for NFSReadStream<'a> {
         let mut read: usize = 0;
         while rem > 0 {
             let mut read_size = rem;
-            let block_offset: usize = if self.phys_addr.offset == u32::MAX { 0 } else { self.phys_addr.offset as usize };
+            let block_offset: usize =
+                if self.phys_addr.offset == u32::MAX { 0 } else { self.phys_addr.offset as usize };
             if read_size + block_offset > BUFFER_SIZE {
                 read_size = BUFFER_SIZE - block_offset
             }
@@ -197,11 +193,10 @@ impl<'a> Read for NFSReadStream<'a> {
             read += read_size;
             rem -= read_size;
             self.offset += read_size as u64;
-            self.set_logical_addr(self.offset)
-                .map_err(|v| match v {
-                    Error::Io(_, v) => v,
-                    _ => io::Error::from(io::ErrorKind::Other)
-                })?;
+            self.set_logical_addr(self.offset).map_err(|v| match v {
+                Error::Io(_, v) => v,
+                _ => io::Error::from(io::ErrorKind::Other),
+            })?;
         }
         io::Result::Ok(read)
     }
@@ -214,23 +209,18 @@ impl<'a> Seek for NFSReadStream<'a> {
             SeekFrom::End(v) => (self.stable_stream_len()? as i64 + v) as u64,
             SeekFrom::Current(v) => (self.offset as i64 + v) as u64,
         };
-        self.set_logical_addr(self.offset)
-            .map_err(|v| match v {
-                Error::Io(_, v) => v,
-                _ => io::Error::from(io::ErrorKind::Other)
-            })?;
+        self.set_logical_addr(self.offset).map_err(|v| match v {
+            Error::Io(_, v) => v,
+            _ => io::Error::from(io::ErrorKind::Other),
+        })?;
         io::Result::Ok(self.offset)
     }
 
-    fn stream_position(&mut self) -> io::Result<u64> {
-        io::Result::Ok(self.offset)
-    }
+    fn stream_position(&mut self) -> io::Result<u64> { io::Result::Ok(self.offset) }
 }
 
 impl<'a> ReadStream for NFSReadStream<'a> {
-    fn stable_stream_len(&mut self) -> io::Result<u64> {
-        todo!()
-    }
+    fn stable_stream_len(&mut self) -> io::Result<u64> { todo!() }
 }
 
 impl DiscIO for DiscIONFS {
@@ -239,7 +229,7 @@ impl DiscIO for DiscIONFS {
             disc_io: self,
             file: Option::None,
             crypto: Aes128::new(&self.key.into()),
-            phys_addr: fbo_max(),
+            phys_addr: FBO::default(),
             offset,
             cur_file: u32::MAX,
             cur_block: u32::MAX,
@@ -282,9 +272,13 @@ impl DiscIONFS {
                 )));
             }
             File::open(key_path.as_path())
-                .map_err(|v| Error::Io(format!("Failed to open {}", key_path.to_string_lossy()), v))?
+                .map_err(|v| {
+                    Error::Io(format!("Failed to open {}", key_path.to_string_lossy()), v)
+                })?
                 .read(&mut self.key)
-                .map_err(|v| Error::Io(format!("Failed to read {}", key_path.to_string_lossy()), v))?;
+                .map_err(|v| {
+                    Error::Io(format!("Failed to read {}", key_path.to_string_lossy()), v)
+                })?;
         }
         {
             // Load header from first file

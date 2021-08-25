@@ -1,19 +1,27 @@
-use std::{io, io::{Read, Seek, SeekFrom}};
+use std::{
+    io,
+    io::{Read, Seek, SeekFrom},
+};
 
-use aes::{Aes128, NewBlockCipher, Block};
+use aes::{Aes128, Block, NewBlockCipher};
 use binread::prelude::*;
 use block_modes::{block_padding::NoPadding, BlockMode, Cbc};
 use sha1::{digest, Digest, Sha1};
 
-use crate::disc::{BI2Header, BUFFER_SIZE, DiscBase, DiscIO, Header, PartHeader, PartReadStream};
-use crate::{Error, div_rem, Result, array_ref};
-use crate::fst::{find_node, Node, NodeKind, NodeType, node_parser};
-use crate::streams::{OwningWindowedReadStream, ReadStream, SharedWindowedReadStream, wrap_windowed};
+use crate::{
+    array_ref,
+    disc::{BI2Header, DiscBase, DiscIO, Header, PartHeader, PartReadStream, BUFFER_SIZE},
+    div_rem,
+    fst::{find_node, node_parser, Node, NodeKind, NodeType},
+    streams::{wrap_windowed, OwningWindowedReadStream, ReadStream, SharedWindowedReadStream},
+    Error, Result,
+};
 
 type Aes128Cbc = Cbc<Aes128, NoPadding>;
 
 const BLOCK_SIZE: usize = 0x7c00;
 const BUFFER_OFFSET: usize = BUFFER_SIZE - BLOCK_SIZE;
+#[rustfmt::skip]
 const COMMON_KEYS: [[u8; 16]; 2] = [
     /* Normal */
     [0xeb, 0xe4, 0x2a, 0x22, 0x5e, 0x85, 0x93, 0xe4, 0x48, 0xd9, 0xc5, 0x45, 0x73, 0x81, 0xaa, 0xf7],
@@ -185,10 +193,7 @@ pub(crate) struct DiscWii {
 }
 
 pub(crate) fn new_disc_wii(mut stream: &mut dyn ReadStream, header: Header) -> Result<DiscWii> {
-    let mut disc = DiscWii {
-        header,
-        part_info: stream.read_be()?,
-    };
+    let mut disc = DiscWii { header, part_info: stream.read_be()? };
     disc.decrypt_partition_keys()?;
     Result::Ok(disc)
 }
@@ -202,29 +207,38 @@ impl DiscWii {
             Aes128Cbc::new(
                 Aes128::new(&COMMON_KEYS[ticket.common_key_idx as usize].into()),
                 &iv.into(),
-            ).decrypt(&mut ticket.enc_key)?;
+            )
+            .decrypt(&mut ticket.enc_key)?;
         }
         Result::Ok(())
     }
 }
 
 impl DiscBase for DiscWii {
-    fn get_header(&self) -> &Header {
-        &self.header
-    }
+    fn get_header(&self) -> &Header { &self.header }
 
-    fn get_data_partition<'a>(&self, disc_io: &'a mut dyn DiscIO) -> Result<Box<dyn PartReadStream + 'a>> {
-        let part = self.part_info.parts.iter().find(|v| v.part_type == WiiPartType::Data)
+    fn get_data_partition<'a>(
+        &self,
+        disc_io: &'a mut dyn DiscIO,
+    ) -> Result<Box<dyn PartReadStream + 'a>> {
+        let part = self
+            .part_info
+            .parts
+            .iter()
+            .find(|v| v.part_type == WiiPartType::Data)
             .ok_or(Error::DiscFormat("Failed to locate data partition".to_string()))?;
         let data_off = part.part_header.data_off;
         let result = Box::new(WiiPartReadStream {
             stream: wrap_windowed(
                 disc_io.begin_read_stream(data_off)?,
-                data_off, part.part_header.data_size,
+                data_off,
+                part.part_header.data_size,
             )?,
             crypto: if disc_io.has_wii_crypto() {
                 Aes128::new(&part.part_header.ticket.enc_key.into()).into()
-            } else { Option::None },
+            } else {
+                Option::None
+            },
             offset: 0,
             cur_block: u64::MAX,
             buf: [0; 0x8000],
@@ -254,9 +268,7 @@ impl<'a> PartReadStream for WiiPartReadStream<'a> {
         Result::Ok(Box::from(self.read_be::<WiiPartition>()?))
     }
 
-    fn ideal_buffer_size(&self) -> usize {
-        BLOCK_SIZE
-    }
+    fn ideal_buffer_size(&self) -> usize { BLOCK_SIZE }
 }
 
 #[inline(always)]
@@ -277,7 +289,9 @@ fn decrypt_block(part: &mut WiiPartReadStream, cluster: usize) -> io::Result<()>
             .decrypt(&mut part.buf[BUFFER_OFFSET..])
             .expect("Failed to decrypt block");
     }
-    if part.validate_hashes && part.crypto.is_some() /* FIXME NFS validation? */ {
+    if part.validate_hashes && part.crypto.is_some()
+    /* FIXME NFS validation? */
+    {
         let (mut group, sub_group) = div_rem(cluster, 8);
         group %= 8;
         // H0 hashes
@@ -287,7 +301,12 @@ fn decrypt_block(part: &mut WiiPartReadStream, cluster: usize) -> io::Result<()>
             let expected = as_digest(array_ref![part.buf, i * 20, 20]);
             let output = hash.finalize();
             if output != expected {
-                panic!("Invalid hash! (block {:?}) {:?}\n\texpected {:?}", i, output.as_slice(), expected);
+                panic!(
+                    "Invalid hash! (block {:?}) {:?}\n\texpected {:?}",
+                    i,
+                    output.as_slice(),
+                    expected
+                );
             }
         }
         // H1 hash
@@ -297,7 +316,12 @@ fn decrypt_block(part: &mut WiiPartReadStream, cluster: usize) -> io::Result<()>
             let expected = as_digest(array_ref![part.buf, 0x280 + sub_group * 20, 20]);
             let output = hash.finalize();
             if output != expected {
-                panic!("Invalid hash! (subgroup {:?}) {:?}\n\texpected {:?}", sub_group, output.as_slice(), expected);
+                panic!(
+                    "Invalid hash! (subgroup {:?}) {:?}\n\texpected {:?}",
+                    sub_group,
+                    output.as_slice(),
+                    expected
+                );
             }
         }
         // H2 hash
@@ -307,7 +331,12 @@ fn decrypt_block(part: &mut WiiPartReadStream, cluster: usize) -> io::Result<()>
             let expected = as_digest(array_ref![part.buf, 0x340 + group * 20, 20]);
             let output = hash.finalize();
             if output != expected {
-                panic!("Invalid hash! (group {:?}) {:?}\n\texpected {:?}", group, output.as_slice(), expected);
+                panic!(
+                    "Invalid hash! (group {:?}) {:?}\n\texpected {:?}",
+                    group,
+                    output.as_slice(),
+                    expected
+                );
             }
         }
     }
@@ -331,9 +360,9 @@ impl<'a> Read for WiiPartReadStream<'a> {
                 cache_size = BLOCK_SIZE - block_offset;
             }
 
-            buf[read..read + cache_size]
-                .copy_from_slice(&self.buf[BUFFER_OFFSET + block_offset..
-                    BUFFER_OFFSET + block_offset + cache_size]);
+            buf[read..read + cache_size].copy_from_slice(
+                &self.buf[BUFFER_OFFSET + block_offset..BUFFER_OFFSET + block_offset + cache_size],
+            );
             read += cache_size;
             rem -= cache_size;
             block_offset = 0;
@@ -365,9 +394,7 @@ impl<'a> Seek for WiiPartReadStream<'a> {
         io::Result::Ok(self.offset)
     }
 
-    fn stream_position(&mut self) -> io::Result<u64> {
-        io::Result::Ok(self.offset)
-    }
+    fn stream_position(&mut self) -> io::Result<u64> { io::Result::Ok(self.offset) }
 }
 
 impl<'a> ReadStream for WiiPartReadStream<'a> {
@@ -386,11 +413,7 @@ pub(crate) struct WiiPartition {
 }
 
 impl PartHeader for WiiPartition {
-    fn root_node(&self) -> &NodeType {
-        &self.root_node
-    }
+    fn root_node(&self) -> &NodeType { &self.root_node }
 
-    fn find_node(&self, path: &str) -> Option<&NodeType> {
-        find_node(&self.root_node, path)
-    }
+    fn find_node(&self, path: &str) -> Option<&NodeType> { find_node(&self.root_node, path) }
 }

@@ -1,29 +1,31 @@
-use std::io;
-use std::io::{Read, Seek, SeekFrom};
+use std::{
+    io,
+    io::{Read, Seek, SeekFrom},
+};
 
 use binread::prelude::*;
 
-use crate::{div_rem, Result};
-use crate::disc::{BI2Header, BUFFER_SIZE, DiscBase, DiscIO, Header, PartHeader, PartReadStream};
-use crate::fst::{find_node, Node, node_parser, NodeKind, NodeType};
-use crate::streams::{ReadStream, SharedWindowedReadStream};
+use crate::{
+    disc::{BI2Header, DiscBase, DiscIO, Header, PartHeader, PartReadStream, BUFFER_SIZE},
+    div_rem,
+    fst::{find_node, node_parser, Node, NodeKind, NodeType},
+    streams::{ReadStream, SharedWindowedReadStream},
+    Result,
+};
 
 pub(crate) struct DiscGCN {
     pub(crate) header: Header,
 }
 
-pub(crate) fn new_disc_gcn(header: Header) -> Result<DiscGCN> {
-    Result::Ok(DiscGCN {
-        header
-    })
-}
+pub(crate) fn new_disc_gcn(header: Header) -> Result<DiscGCN> { Result::Ok(DiscGCN { header }) }
 
 impl DiscBase for DiscGCN {
-    fn get_header(&self) -> &Header {
-        &self.header
-    }
+    fn get_header(&self) -> &Header { &self.header }
 
-    fn get_data_partition<'a>(&self, disc_io: &'a mut dyn DiscIO) -> Result<Box<dyn PartReadStream + 'a>> {
+    fn get_data_partition<'a>(
+        &self,
+        disc_io: &'a mut dyn DiscIO,
+    ) -> Result<Box<dyn PartReadStream + 'a>> {
         Result::Ok(Box::from(GCPartReadStream {
             stream: disc_io.begin_read_stream(0)?,
             offset: 0,
@@ -39,7 +41,6 @@ struct GCPartReadStream<'a> {
     cur_block: u64,
     buf: [u8; BUFFER_SIZE],
 }
-
 
 impl<'a> Read for GCPartReadStream<'a> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -86,15 +87,11 @@ impl<'a> Seek for GCPartReadStream<'a> {
         io::Result::Ok(self.offset)
     }
 
-    fn stream_position(&mut self) -> io::Result<u64> {
-        io::Result::Ok(self.offset)
-    }
+    fn stream_position(&mut self) -> io::Result<u64> { io::Result::Ok(self.offset) }
 }
 
 impl<'a> ReadStream for GCPartReadStream<'a> {
-    fn stable_stream_len(&mut self) -> io::Result<u64> {
-        self.stream.stable_stream_len()
-    }
+    fn stable_stream_len(&mut self) -> io::Result<u64> { self.stream.stable_stream_len() }
 }
 
 impl<'a> PartReadStream for GCPartReadStream<'a> {
@@ -108,9 +105,7 @@ impl<'a> PartReadStream for GCPartReadStream<'a> {
         Result::Ok(Box::from(self.read_be::<GCPartition>()?))
     }
 
-    fn ideal_buffer_size(&self) -> usize {
-        BUFFER_SIZE
-    }
+    fn ideal_buffer_size(&self) -> usize { BUFFER_SIZE }
 }
 
 #[derive(Clone, Debug, PartialEq, BinRead)]
@@ -123,11 +118,7 @@ pub(crate) struct GCPartition {
 }
 
 impl PartHeader for GCPartition {
-    fn root_node(&self) -> &NodeType {
-        &self.root_node
-    }
+    fn root_node(&self) -> &NodeType { &self.root_node }
 
-    fn find_node(&self, path: &str) -> Option<&NodeType> {
-        find_node(&self.root_node, path)
-    }
+    fn find_node(&self, path: &str) -> Option<&NodeType> { find_node(&self.root_node, path) }
 }

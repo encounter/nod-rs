@@ -1,11 +1,12 @@
 //! Disc file format related logic (ISO, NFS, etc)
 
-use std::{fs, io};
-use std::path::Path;
+use std::{fs, io, path::Path};
 
-use crate::{Error, Result};
-use crate::io::{iso::new_disc_io_iso, nfs::new_disc_io_nfs};
-use crate::streams::ReadStream;
+use crate::{
+    io::{iso::new_disc_io_iso, nfs::new_disc_io_nfs},
+    streams::ReadStream,
+    Error, Result,
+};
 
 pub(crate) mod iso;
 pub(crate) mod nfs;
@@ -27,7 +28,9 @@ pub fn has_extension(filename: &Path, extension: &str) -> bool {
         // TODO use with Rust 1.53+
         // ext.eq_ignore_ascii_case(extension)
         ext.to_str().unwrap_or("").eq_ignore_ascii_case(extension)
-    } else { false }
+    } else {
+        false
+    }
 }
 
 /// Creates a new [`DiscIO`] instance.
@@ -57,9 +60,10 @@ pub fn new_disc_io(filename: &Path) -> Result<Box<dyn DiscIO>> {
         ));
     }
     if !meta.unwrap().is_file() {
-        return Result::Err(Error::DiscFormat(
-            format!("Input is not a file: {}", filename.to_string_lossy())
-        ));
+        return Result::Err(Error::DiscFormat(format!(
+            "Input is not a file: {}",
+            filename.to_string_lossy()
+        )));
     }
     if has_extension(path, "iso") {
         Result::Ok(Box::from(new_disc_io_iso(path)?))

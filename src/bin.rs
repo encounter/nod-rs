@@ -1,14 +1,17 @@
-use std::{env, fs, io};
-use std::io::BufWriter;
-use std::path::{Path, PathBuf};
+use std::{
+    env, fs, io,
+    io::BufWriter,
+    path::{Path, PathBuf},
+};
 
-use clap::{AppSettings, clap_app};
+use clap::{clap_app, AppSettings};
 use file_size;
-
-use nod::disc::{new_disc_base, PartReadStream};
-use nod::fst::NodeType;
-use nod::io::{has_extension, new_disc_io};
-use nod::Result;
+use nod::{
+    disc::{new_disc_base, PartReadStream},
+    fst::NodeType,
+    io::{has_extension, new_disc_io},
+    Result,
+};
 
 fn main() -> Result<()> {
     let matches = clap_app!(nodtool =>
@@ -36,7 +39,8 @@ Phillip Stephens (Antidote)")
             (@arg DIR: "Output directory (optional)")
             (@arg quiet: -q "Quiet output")
         )
-    ).get_matches();
+    )
+    .get_matches();
     if let Some(matches) = matches.subcommand_matches("extract") {
         let file: PathBuf = PathBuf::from(matches.value_of("FILE").unwrap());
         let output_dir: PathBuf;
@@ -61,12 +65,20 @@ Phillip Stephens (Antidote)")
     Result::Ok(())
 }
 
-fn extract_node(node: &NodeType, partition: &mut dyn PartReadStream, base_path: &Path) -> io::Result<()> {
+fn extract_node(
+    node: &NodeType,
+    partition: &mut dyn PartReadStream,
+    base_path: &Path,
+) -> io::Result<()> {
     match node {
         NodeType::File(v) => {
             let mut file_path = base_path.to_owned();
             file_path.push(v.name.as_ref());
-            println!("Extracting {} (size: {})", file_path.to_string_lossy(), file_size::fit_4(v.length as u64));
+            println!(
+                "Extracting {} (size: {})",
+                file_path.to_string_lossy(),
+                file_size::fit_4(v.length as u64)
+            );
             let file = fs::File::create(file_path)?;
             let mut buf_writer = BufWriter::with_capacity(partition.ideal_buffer_size(), file);
             io::copy(&mut partition.begin_file_stream(v)?, &mut buf_writer)?;

@@ -26,8 +26,8 @@
 //!     println!(s);
 //! }
 //! ```
-pub mod fst;
 pub mod disc;
+pub mod fst;
 pub mod io;
 pub mod streams;
 
@@ -42,25 +42,22 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl From<std::io::Error> for Error {
-    fn from(v: std::io::Error) -> Self {
-        Error::Io("I/O error".to_string(), v)
-    }
+    fn from(v: std::io::Error) -> Self { Error::Io("I/O error".to_string(), v) }
 }
 
 impl From<binread::Error> for Error {
-    fn from(v: binread::Error) -> Self {
-        Error::BinaryFormat(v)
-    }
+    fn from(v: binread::Error) -> Self { Error::BinaryFormat(v) }
 }
 
 impl From<block_modes::BlockModeError> for Error {
-    fn from(v: block_modes::BlockModeError) -> Self {
-        Error::Encryption(v)
-    }
+    fn from(v: block_modes::BlockModeError) -> Self { Error::Encryption(v) }
 }
 
 #[inline(always)]
-pub(crate) fn div_rem<T: std::ops::Div<Output=T> + std::ops::Rem<Output=T> + Copy>(x: T, y: T) -> (T, T) {
+pub(crate) fn div_rem<T: std::ops::Div<Output = T> + std::ops::Rem<Output = T> + Copy>(
+    x: T,
+    y: T,
+) -> (T, T) {
     let quot = x / y;
     let rem = x % y;
     (quot, rem)

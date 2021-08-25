@@ -1,15 +1,16 @@
 //! Disc type related logic (GameCube, Wii)
 
-use std::fmt::Debug;
-use std::io;
+use std::{fmt::Debug, io};
 
-use binread::{BinReaderExt, NullString, prelude::*};
+use binread::{prelude::*, BinReaderExt, NullString};
 
-use crate::{Error, Result};
-use crate::disc::{gcn::new_disc_gcn, wii::new_disc_wii};
-use crate::fst::{Node, NodeType};
-use crate::io::DiscIO;
-use crate::streams::{ReadStream, SharedWindowedReadStream};
+use crate::{
+    disc::{gcn::new_disc_gcn, wii::new_disc_wii},
+    fst::{Node, NodeType},
+    io::DiscIO,
+    streams::{ReadStream, SharedWindowedReadStream},
+    Error, Result,
+};
 
 pub(crate) mod gcn;
 pub(crate) mod wii;
@@ -89,7 +90,10 @@ pub trait DiscBase {
     /// let disc_base = new_disc_base(disc_io.as_mut())?;
     /// let mut partition = disc_base.get_data_partition(disc_io.as_mut())?;
     /// ```
-    fn get_data_partition<'a>(&self, disc_io: &'a mut dyn DiscIO) -> Result<Box<dyn PartReadStream + 'a>>;
+    fn get_data_partition<'a>(
+        &self,
+        disc_io: &'a mut dyn DiscIO,
+    ) -> Result<Box<dyn PartReadStream + 'a>>;
 }
 
 /// Creates a new [`DiscBase`] instance.
