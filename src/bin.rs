@@ -7,9 +7,9 @@ use std::{
 use clap::{clap_app, AppSettings};
 use file_size;
 use nod::{
-    disc::{new_disc_base, PartReadStream},
+    disc::{new_disc_base, DiscBase, PartReadStream},
     fst::NodeType,
-    io::{has_extension, new_disc_io},
+    io::{has_extension, new_disc_io, DiscIO},
     Result,
 };
 

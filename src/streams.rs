@@ -40,11 +40,16 @@ pub trait ReadStream: Read + Seek {
     /// Creates a windowed read sub-stream with offset and size.
     ///
     /// Seeks underlying stream immediately.
-    fn new_window(&mut self, offset: u64, size: u64) -> io::Result<SharedWindowedReadStream>
-    where Self: Sized {
+    fn new_window(&mut self, offset: u64, size: u64) -> io::Result<SharedWindowedReadStream> {
         self.seek(SeekFrom::Start(offset))?;
-        io::Result::Ok(SharedWindowedReadStream { base: self, begin: offset, end: offset + size })
+        io::Result::Ok(SharedWindowedReadStream {
+            base: self.as_dyn(),
+            begin: offset,
+            end: offset + size,
+        })
     }
+
+    fn as_dyn(&mut self) -> &mut dyn ReadStream;
 }
 
 impl ReadStream for File {
@@ -55,6 +60,8 @@ impl ReadStream for File {
         self.seek(SeekFrom::Start(before))?;
         result
     }
+
+    fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
 }
 
 trait WindowedReadStream: ReadStream {
@@ -82,6 +89,15 @@ pub struct SharedWindowedReadStream<'a> {
     pub base: &'a mut dyn ReadStream,
     pub begin: u64,
     pub end: u64,
+}
+
+impl<'a> SharedWindowedReadStream<'a> {
+    pub fn set_window(&mut self, begin: u64, end: u64) -> io::Result<()> {
+        self.base.seek(SeekFrom::Start(begin))?;
+        self.begin = begin;
+        self.end = end;
+        io::Result::Ok(())
+    }
 }
 
 #[inline(always)]
@@ -124,6 +140,8 @@ impl<'a> Seek for OwningWindowedReadStream<'a> {
 
 impl<'a> ReadStream for OwningWindowedReadStream<'a> {
     fn stable_stream_len(&mut self) -> io::Result<u64> { Result::Ok(self.end - self.begin) }
+
+    fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
 }
 
 impl<'a> WindowedReadStream for OwningWindowedReadStream<'a> {
@@ -146,6 +164,8 @@ impl<'a> Seek for SharedWindowedReadStream<'a> {
 
 impl<'a> ReadStream for SharedWindowedReadStream<'a> {
     fn stable_stream_len(&mut self) -> io::Result<u64> { Result::Ok(self.end - self.begin) }
+
+    fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
 }
 
 impl<'a> WindowedReadStream for SharedWindowedReadStream<'a> {

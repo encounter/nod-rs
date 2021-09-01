@@ -3,7 +3,7 @@
 use std::{fs, io, path::Path};
 
 use crate::{
-    io::{iso::new_disc_io_iso, nfs::new_disc_io_nfs},
+    io::{iso::DiscIOISO, nfs::DiscIONFS},
     streams::ReadStream,
     Error, Result,
 };
@@ -19,18 +19,6 @@ pub trait DiscIO {
 
     /// If false, the file format does not use standard Wii partition encryption. (e.g. NFS)
     fn has_wii_crypto(&self) -> bool { true }
-}
-
-/// Helper function for checking a file extension.
-#[inline(always)]
-pub fn has_extension(filename: &Path, extension: &str) -> bool {
-    if let Some(ext) = filename.extension() {
-        // TODO use with Rust 1.53+
-        // ext.eq_ignore_ascii_case(extension)
-        ext.to_str().unwrap_or("").eq_ignore_ascii_case(extension)
-    } else {
-        false
-    }
 }
 
 /// Creates a new [`DiscIO`] instance.
@@ -66,14 +54,26 @@ pub fn new_disc_io(filename: &Path) -> Result<Box<dyn DiscIO>> {
         )));
     }
     if has_extension(path, "iso") {
-        Result::Ok(Box::from(new_disc_io_iso(path)?))
+        Result::Ok(Box::from(DiscIOISO::new(path)?))
     } else if has_extension(path, "nfs") {
         if matches!(path.parent(), Some(parent) if parent.is_dir()) {
-            Result::Ok(Box::from(new_disc_io_nfs(path.parent().unwrap())?))
+            Result::Ok(Box::from(DiscIONFS::new(path.parent().unwrap())?))
         } else {
             Result::Err(Error::DiscFormat("Failed to locate NFS parent directory".to_string()))
         }
     } else {
         Result::Err(Error::DiscFormat("Unknown file type".to_string()))
+    }
+}
+
+/// Helper function for checking a file extension.
+#[inline(always)]
+pub fn has_extension(filename: &Path, extension: &str) -> bool {
+    if let Some(ext) = filename.extension() {
+        // TODO use with Rust 1.53+
+        // ext.eq_ignore_ascii_case(extension)
+        ext.to_str().unwrap_or("").eq_ignore_ascii_case(extension)
+    } else {
+        false
     }
 }

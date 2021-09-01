@@ -5,7 +5,7 @@ use std::{fmt::Debug, io};
 use binread::{prelude::*, BinReaderExt, NullString};
 
 use crate::{
-    disc::{gcn::new_disc_gcn, wii::new_disc_wii},
+    disc::{gcn::DiscGCN, wii::DiscWii},
     fst::{Node, NodeType},
     io::DiscIO,
     streams::{ReadStream, SharedWindowedReadStream},
@@ -113,9 +113,9 @@ pub fn new_disc_base(disc_io: &mut dyn DiscIO) -> Result<Box<dyn DiscBase>> {
     let mut stream = disc_io.begin_read_stream(0)?;
     let header: Header = stream.read_be()?;
     if header.wii_magic == 0x5D1C9EA3 {
-        Result::Ok(Box::from(new_disc_wii(stream.as_mut(), header)?))
+        Result::Ok(Box::from(DiscWii::new(stream.as_mut(), header)?))
     } else if header.gcn_magic == 0xC2339F3D {
-        Result::Ok(Box::from(new_disc_gcn(header)?))
+        Result::Ok(Box::from(DiscGCN::new(header)?))
     } else {
         Result::Err(Error::DiscFormat("Invalid GC/Wii magic".to_string()))
     }

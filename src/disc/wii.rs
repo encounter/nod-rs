@@ -192,10 +192,12 @@ pub(crate) struct DiscWii {
     part_info: WiiPartInfo,
 }
 
-pub(crate) fn new_disc_wii(mut stream: &mut dyn ReadStream, header: Header) -> Result<DiscWii> {
-    let mut disc = DiscWii { header, part_info: stream.read_be()? };
-    disc.decrypt_partition_keys()?;
-    Result::Ok(disc)
+impl DiscWii {
+    pub(crate) fn new(mut stream: &mut dyn ReadStream, header: Header) -> Result<DiscWii> {
+        let mut disc = DiscWii { header, part_info: stream.read_be()? };
+        disc.decrypt_partition_keys()?;
+        Result::Ok(disc)
+    }
 }
 
 impl DiscWii {
@@ -401,6 +403,8 @@ impl<'a> ReadStream for WiiPartReadStream<'a> {
     fn stable_stream_len(&mut self) -> io::Result<u64> {
         io::Result::Ok(to_block_size(self.stream.stable_stream_len()?))
     }
+
+    fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
 }
 
 #[derive(Clone, Debug, PartialEq, BinRead)]

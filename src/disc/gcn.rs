@@ -17,7 +17,9 @@ pub(crate) struct DiscGCN {
     pub(crate) header: Header,
 }
 
-pub(crate) fn new_disc_gcn(header: Header) -> Result<DiscGCN> { Result::Ok(DiscGCN { header }) }
+impl DiscGCN {
+    pub(crate) fn new(header: Header) -> Result<DiscGCN> { Result::Ok(DiscGCN { header }) }
+}
 
 impl DiscBase for DiscGCN {
     fn get_header(&self) -> &Header { &self.header }
@@ -92,6 +94,8 @@ impl<'a> Seek for GCPartReadStream<'a> {
 
 impl<'a> ReadStream for GCPartReadStream<'a> {
     fn stable_stream_len(&mut self) -> io::Result<u64> { self.stream.stable_stream_len() }
+
+    fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
 }
 
 impl<'a> PartReadStream for GCPartReadStream<'a> {

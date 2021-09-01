@@ -1,20 +1,20 @@
-use std::fs::File;
-use std::io::{Seek, SeekFrom};
-use std::io;
-use std::path::{Path, PathBuf};
+use std::{
+    fs::File,
+    io,
+    io::{Seek, SeekFrom},
+    path::{Path, PathBuf},
+};
 
-use crate::io::DiscIO;
-use crate::Result;
-use crate::streams::ReadStream;
+use crate::{io::DiscIO, streams::ReadStream, Result};
 
 pub(crate) struct DiscIOISO {
     pub(crate) filename: PathBuf,
 }
 
-pub(crate) fn new_disc_io_iso(filename: &Path) -> Result<DiscIOISO> {
-    Result::Ok(DiscIOISO {
-        filename: filename.to_owned(),
-    })
+impl DiscIOISO {
+    pub(crate) fn new(filename: &Path) -> Result<DiscIOISO> {
+        Result::Ok(DiscIOISO { filename: filename.to_owned() })
+    }
 }
 
 impl DiscIO for DiscIOISO {

@@ -83,11 +83,13 @@ pub(crate) struct DiscIONFS {
     pub(crate) header: Option<NFSHeader>,
 }
 
-pub(crate) fn new_disc_io_nfs(directory: &Path) -> Result<DiscIONFS> {
-    let mut disc_io =
-        DiscIONFS { directory: directory.to_owned(), key: [0; 16], header: Option::None };
-    disc_io.validate_files()?;
-    Result::Ok(disc_io)
+impl DiscIONFS {
+    pub(crate) fn new(directory: &Path) -> Result<DiscIONFS> {
+        let mut disc_io =
+            DiscIONFS { directory: directory.to_owned(), key: [0; 16], header: Option::None };
+        disc_io.validate_files()?;
+        Result::Ok(disc_io)
+    }
 }
 
 pub(crate) struct NFSReadStream<'a> {
@@ -221,6 +223,8 @@ impl<'a> Seek for NFSReadStream<'a> {
 
 impl<'a> ReadStream for NFSReadStream<'a> {
     fn stable_stream_len(&mut self) -> io::Result<u64> { todo!() }
+
+    fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
 }
 
 impl DiscIO for DiscIONFS {
