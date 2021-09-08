@@ -2,7 +2,7 @@ use std::{
     fs::File,
     io,
     io::{Read, Seek, SeekFrom},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use aes::{Aes128, NewBlockCipher};
@@ -247,7 +247,14 @@ impl DiscIO for DiscIONFS {
 impl DiscIONFS {
     fn get_path<P: AsRef<Path>>(&self, path: P) -> PathBuf {
         let mut buf = self.directory.clone();
-        buf.push(path);
+        for component in path.as_ref().components() {
+            match component {
+                Component::ParentDir => {
+                    buf.pop();
+                }
+                _ => buf.push(component),
+            }
+        }
         buf
     }
 
@@ -263,25 +270,28 @@ impl DiscIONFS {
     pub(crate) fn validate_files(&mut self) -> Result<()> {
         {
             // Load key file
-            let mut key_path = self.get_path("../code/htk.bin");
-            if !key_path.is_file() {
-                key_path = self.directory.clone();
-                key_path.push("htk.bin");
+            let primary_key_path =
+                self.get_path(["..", "code", "htk.bin"].iter().collect::<PathBuf>());
+            let secondary_key_path = self.get_path("htk.bin");
+            let mut key_path = primary_key_path.canonicalize();
+            if key_path.is_err() {
+                key_path = secondary_key_path.canonicalize();
             }
-            if !key_path.is_file() {
+            if key_path.is_err() {
                 return Result::Err(Error::DiscFormat(format!(
                     "Failed to locate {} or {}",
-                    self.get_path("../code/htk.bin").to_string_lossy(),
-                    key_path.to_string_lossy()
+                    primary_key_path.to_string_lossy(),
+                    secondary_key_path.to_string_lossy()
                 )));
             }
-            File::open(key_path.as_path())
+            let resolved_path = key_path.unwrap();
+            File::open(resolved_path.as_path())
                 .map_err(|v| {
-                    Error::Io(format!("Failed to open {}", key_path.to_string_lossy()), v)
+                    Error::Io(format!("Failed to open {}", resolved_path.to_string_lossy()), v)
                 })?
                 .read(&mut self.key)
                 .map_err(|v| {
-                    Error::Io(format!("Failed to read {}", key_path.to_string_lossy()), v)
+                    Error::Io(format!("Failed to read {}", resolved_path.to_string_lossy()), v)
                 })?;
         }
         {
