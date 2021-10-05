@@ -3,8 +3,11 @@
 use std::{fs, io, path::Path};
 
 use crate::{
-    io::{iso::DiscIOISO, nfs::DiscIONFS},
-    streams::ReadStream,
+    io::{
+        iso::{DiscIOISO, DiscIOISOStream},
+        nfs::DiscIONFS,
+    },
+    streams::{ByteReadStream, ReadStream},
     Error, Result,
 };
 
@@ -15,7 +18,7 @@ pub(crate) mod nfs;
 pub trait DiscIO {
     /// Opens a new read stream for the disc file(s).
     /// Generally does _not_ need to be used directly.
-    fn begin_read_stream(&self, offset: u64) -> io::Result<Box<dyn ReadStream + '_>>;
+    fn begin_read_stream(&mut self, offset: u64) -> io::Result<Box<dyn ReadStream + '_>>;
 
     /// If false, the file format does not use standard Wii partition encryption. (e.g. NFS)
     fn has_wii_crypto(&self) -> bool { true }
@@ -64,6 +67,16 @@ pub fn new_disc_io(filename: &Path) -> Result<Box<dyn DiscIO>> {
     } else {
         Result::Err(Error::DiscFormat("Unknown file type".to_string()))
     }
+}
+
+pub fn new_disc_io_from_buf(buf: &[u8]) -> Result<Box<dyn DiscIO + '_>> {
+    Ok(Box::from(DiscIOISOStream::new(ByteReadStream { bytes: buf, position: 0 })?))
+}
+
+pub fn new_disc_io_from_stream<'a, T: 'a + ReadStream + Sized>(
+    stream: T,
+) -> Result<Box<dyn DiscIO + 'a>> {
+    Ok(Box::from(DiscIOISOStream::new(stream)?))
 }
 
 /// Helper function for checking a file extension.

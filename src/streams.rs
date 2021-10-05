@@ -173,3 +173,55 @@ impl<'a> WindowedReadStream for SharedWindowedReadStream<'a> {
 
     fn window(&self) -> (u64, u64) { (self.begin, self.end) }
 }
+
+pub struct ByteReadStream<'a> {
+    pub bytes: &'a [u8],
+    pub position: u64,
+}
+
+impl Read for ByteReadStream<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let mut len = buf.len();
+        let total = self.bytes.len();
+        let pos = self.position as usize;
+        if len + pos > total {
+            if pos >= total {
+                return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+            }
+            len = total - pos;
+        }
+        buf.copy_from_slice(&self.bytes[pos..pos + len]);
+        self.position += len as u64;
+        Ok(len)
+    }
+}
+
+impl Seek for ByteReadStream<'_> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let new_pos = match pos {
+            SeekFrom::Start(v) => v,
+            SeekFrom::End(v) => (self.bytes.len() as i64 + v) as u64,
+            SeekFrom::Current(v) => (self.position as i64 + v) as u64,
+        };
+        if new_pos > self.bytes.len() as u64 {
+            Err(io::Error::from(io::ErrorKind::UnexpectedEof))
+        } else {
+            self.position = new_pos;
+            Ok(new_pos)
+        }
+    }
+
+    // fn stream_len(&mut self) -> io::Result<u64> { Ok(self.bytes.len() as u64) }
+
+    fn stream_position(&mut self) -> io::Result<u64> { Ok(self.position) }
+}
+
+impl ReadStream for ByteReadStream<'_> {
+    fn stable_stream_len(&mut self) -> io::Result<u64> { Ok(self.bytes.len() as u64) }
+
+    fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
+}
+
+impl<'a> AsMut<dyn ReadStream + 'a> for ByteReadStream<'a> {
+    fn as_mut(&mut self) -> &mut (dyn ReadStream + 'a) { self as &mut (dyn ReadStream + 'a) }
+}

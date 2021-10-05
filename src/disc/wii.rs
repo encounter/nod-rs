@@ -230,13 +230,14 @@ impl DiscBase for DiscWii {
             .find(|v| v.part_type == WiiPartType::Data)
             .ok_or(Error::DiscFormat("Failed to locate data partition".to_string()))?;
         let data_off = part.part_header.data_off;
+        let has_crypto = disc_io.has_wii_crypto();
         let result = Box::new(WiiPartReadStream {
             stream: wrap_windowed(
                 disc_io.begin_read_stream(data_off)?,
                 data_off,
                 part.part_header.data_size,
             )?,
-            crypto: if disc_io.has_wii_crypto() {
+            crypto: if has_crypto {
                 Aes128::new(&part.part_header.ticket.enc_key.into()).into()
             } else {
                 Option::None

@@ -228,7 +228,7 @@ impl<'a> ReadStream for NFSReadStream<'a> {
 }
 
 impl DiscIO for DiscIONFS {
-    fn begin_read_stream(&self, offset: u64) -> io::Result<Box<dyn ReadStream + '_>> {
+    fn begin_read_stream(&mut self, offset: u64) -> io::Result<Box<dyn ReadStream + '_>> {
         io::Result::Ok(Box::from(NFSReadStream {
             disc_io: self,
             file: Option::None,
