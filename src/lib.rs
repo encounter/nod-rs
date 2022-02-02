@@ -26,31 +26,29 @@
 //!     println!(s);
 //! }
 //! ```
+use thiserror::Error;
+
 pub mod disc;
 pub mod fst;
 pub mod io;
 pub mod streams;
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum Error {
-    BinaryFormat(binread::Error),
-    Encryption(block_modes::BlockModeError),
-    Io(String, std::io::Error),
+    #[error("binary format")]
+    BinaryFormat(#[from] binread::Error),
+    #[error("encryption")]
+    Encryption(#[from] block_modes::BlockModeError),
+    #[error("io error: `{0}`")]
+    Io(String, #[source] std::io::Error),
+    #[error("disc format error: `{0}`")]
     DiscFormat(String),
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = anyhow::Result<T, Error>;
 
 impl From<std::io::Error> for Error {
     fn from(v: std::io::Error) -> Self { Error::Io("I/O error".to_string(), v) }
-}
-
-impl From<binread::Error> for Error {
-    fn from(v: binread::Error) -> Self { Error::BinaryFormat(v) }
-}
-
-impl From<block_modes::BlockModeError> for Error {
-    fn from(v: block_modes::BlockModeError) -> Self { Error::Encryption(v) }
 }
 
 #[inline(always)]

@@ -73,7 +73,7 @@ pub(crate) struct BI2Header {
 pub(crate) const BUFFER_SIZE: usize = 0x8000;
 
 /// Contains a disc's header & partition information.
-pub trait DiscBase {
+pub trait DiscBase: Send + Sync {
     /// Retrieves the disc's header.
     fn get_header(&self) -> &Header;
 
@@ -157,7 +157,7 @@ pub trait PartReadStream: ReadStream {
 }
 
 /// Disc partition header with file system table.
-pub trait PartHeader: Debug {
+pub trait PartHeader: Debug + Send + Sync {
     /// The root node for the filesystem.
     fn root_node(&self) -> &NodeType;
 

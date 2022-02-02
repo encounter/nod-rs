@@ -57,7 +57,14 @@ impl ReadStream for File {
         let before = self.stream_position()?;
         let result = self.seek(SeekFrom::End(0));
         // Try to restore position even if the above failed
-        self.seek(SeekFrom::Start(before))?;
+        let seek_result = self.seek(SeekFrom::Start(before));
+        if seek_result.is_err() {
+            return if result.is_err() {
+                result
+            } else {
+                seek_result
+            }
+        }
         result
     }
 
@@ -104,6 +111,9 @@ impl<'a> SharedWindowedReadStream<'a> {
 fn windowed_read(stream: &mut dyn WindowedReadStream, buf: &mut [u8]) -> io::Result<usize> {
     let pos = stream.stream_position()?;
     let size = stream.stable_stream_len()?;
+    if pos == size {
+        return Ok(0);
+    }
     stream.base_stream().read(if pos + buf.len() as u64 > size {
         &mut buf[..(size - pos) as usize]
     } else {
@@ -185,8 +195,10 @@ impl Read for ByteReadStream<'_> {
         let total = self.bytes.len();
         let pos = self.position as usize;
         if len + pos > total {
-            if pos >= total {
+            if pos > total {
                 return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+            } else if pos == total {
+                return Ok(0);
             }
             len = total - pos;
         }

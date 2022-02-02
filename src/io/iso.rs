@@ -39,7 +39,7 @@ impl<T: ReadStream + Sized> DiscIOISOStream<T> {
     }
 }
 
-impl<T: ReadStream + Sized> DiscIO for DiscIOISOStream<T> {
+impl<T: ReadStream + Sized + Send + Sync> DiscIO for DiscIOISOStream<T> {
     fn begin_read_stream<'a>(&'a mut self, offset: u64) -> io::Result<Box<dyn ReadStream + 'a>> {
         let size = self.stream.stable_stream_len()?;
         let mut stream = self.stream.new_window(0, size)?;

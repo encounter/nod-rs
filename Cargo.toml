@@ -1,6 +1,6 @@
 [package]
 name = "nod"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2018"
 authors = ["Luke Street <luke@street.dev>"]
 license = "MIT OR Apache-2.0"
@@ -19,9 +19,11 @@ path = "src/bin.rs"
 
 [dependencies]
 aes = "0.7.4"
+anyhow = "1.0.53"
 binread = "2.1.1"
 block-modes = "0.8.1"
 clap = "2.33.3"
 encoding_rs = "0.8.28"
 file-size = "1.0.3"
 sha-1 = "0.9.7"
+thiserror = "1.0.30"

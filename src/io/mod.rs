@@ -15,7 +15,7 @@ pub(crate) mod iso;
 pub(crate) mod nfs;
 
 /// Abstraction over supported disc file types.
-pub trait DiscIO {
+pub trait DiscIO: Send + Sync {
     /// Opens a new read stream for the disc file(s).
     /// Generally does _not_ need to be used directly.
     fn begin_read_stream(&mut self, offset: u64) -> io::Result<Box<dyn ReadStream + '_>>;
@@ -73,7 +73,7 @@ pub fn new_disc_io_from_buf(buf: &[u8]) -> Result<Box<dyn DiscIO + '_>> {
     Ok(Box::from(DiscIOISOStream::new(ByteReadStream { bytes: buf, position: 0 })?))
 }
 
-pub fn new_disc_io_from_stream<'a, T: 'a + ReadStream + Sized>(
+pub fn new_disc_io_from_stream<'a, T: 'a + ReadStream + Sized + Send + Sync>(
     stream: T,
 ) -> Result<Box<dyn DiscIO + 'a>> {
     Ok(Box::from(DiscIOISOStream::new(stream)?))
