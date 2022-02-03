@@ -1,10 +1,28 @@
-name: build
+name: Build
 
 on: [ push, pull_request ]
 
 jobs:
-  default:
-    name: Default
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: [ stable, 1.51.0, nightly ]
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          override: true
+      - uses: EmbarkStudios/cargo-deny-action@v1
+      - uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --all-features
+
+  build:
+    name: Build
     strategy:
       matrix:
         platform: [ ubuntu-latest, macos-latest, windows-latest ]
@@ -17,10 +35,6 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
           override: true
-      - uses: actions-rs/cargo@v1
-        with:
-          command: check
-          args: --all-features
       - uses: actions-rs/cargo@v1
         with:
           command: test
