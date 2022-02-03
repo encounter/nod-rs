@@ -52,7 +52,7 @@ impl<'a> Read for GCPartReadStream<'a> {
 
         while rem > 0 {
             if block != self.cur_block as usize {
-                self.stream.read(&mut self.buf)?;
+                self.stream.read_exact(&mut self.buf)?;
                 self.cur_block = block as u64;
             }
 

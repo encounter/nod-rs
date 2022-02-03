@@ -105,7 +105,7 @@ struct Ticket {
 }
 
 #[derive(Debug, PartialEq, BinRead)]
-struct TMDContent {
+struct TmdContent {
     id: u32,
     index: u16,
     content_type: u16,
@@ -114,7 +114,7 @@ struct TMDContent {
 }
 
 #[derive(Debug, PartialEq, BinRead)]
-struct TMD {
+struct Tmd {
     sig_type: SigType,
     #[br(count = 256)]
     sig: Vec<u8>,
@@ -137,7 +137,7 @@ struct TMD {
     #[br(pad_after = 2)]
     boot_idx: u16,
     #[br(count = num_contents)]
-    contents: Vec<TMDContent>,
+    contents: Vec<TmdContent>,
 }
 
 #[derive(Debug, PartialEq, BinRead)]
@@ -176,7 +176,7 @@ struct WiiPartitionHeader {
     data_size: u64,
 
     #[br(seek_before = SeekFrom::Start(tmd_off))]
-    tmd: TMD,
+    tmd: Tmd,
     #[br(seek_before = SeekFrom::Start(cert_chain_off))]
     ca_cert: Certificate,
     tmd_cert: Certificate,
@@ -226,7 +226,7 @@ impl DiscBase for DiscWii {
             .parts
             .iter()
             .find(|v| v.part_type == WiiPartType::Data)
-            .ok_or(Error::DiscFormat("Failed to locate data partition".to_string()))?;
+            .ok_or_else(|| Error::DiscFormat("Failed to locate data partition".to_string()))?;
         let data_off = part.part_header.data_off;
         let has_crypto = disc_io.has_wii_crypto();
         let result = Box::new(WiiPartReadStream {
@@ -276,7 +276,7 @@ impl<'a> PartReadStream for WiiPartReadStream<'a> {
 fn as_digest(slice: &[u8; 20]) -> digest::Output<Sha1> { (*slice).into() }
 
 fn decrypt_block(part: &mut WiiPartReadStream, cluster: usize) -> io::Result<()> {
-    part.stream.read(&mut part.buf)?;
+    part.stream.read_exact(&mut part.buf)?;
     if part.crypto.is_some() {
         // Fetch IV before decrypting header
         let iv = Block::from(*array_ref![part.buf, 0x3d0, 16]);

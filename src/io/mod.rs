@@ -37,18 +37,18 @@ pub trait DiscIO: Send + Sync {
 /// ```
 pub fn new_disc_io(filename: &Path) -> Result<Box<dyn DiscIO>> {
     let path_result = fs::canonicalize(filename);
-    if path_result.is_err() {
+    if let Err(err) = path_result {
         return Result::Err(Error::Io(
             format!("Failed to open {}", filename.to_string_lossy()),
-            path_result.unwrap_err(),
+            err,
         ));
     }
     let path = path_result.as_ref().unwrap();
     let meta = fs::metadata(path);
-    if meta.is_err() {
+    if let Err(err) = meta {
         return Result::Err(Error::Io(
             format!("Failed to open {}", filename.to_string_lossy()),
-            meta.unwrap_err(),
+            err,
         ));
     }
     if !meta.unwrap().is_file() {

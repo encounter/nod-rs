@@ -191,6 +191,7 @@ impl Read for ByteReadStream<'_> {
         let total = self.bytes.len();
         let pos = self.position as usize;
         if len + pos > total {
+            #[allow(clippy::comparison_chain)]
             if pos > total {
                 return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
             } else if pos == total {

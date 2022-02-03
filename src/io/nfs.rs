@@ -34,16 +34,16 @@ pub(crate) struct NFSHeader {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct FBO {
+pub(crate) struct Fbo {
     pub(crate) file: u32,
     pub(crate) block: u32,
     pub(crate) l_block: u32,
     pub(crate) offset: u32,
 }
 
-impl Default for FBO {
+impl Default for Fbo {
     fn default() -> Self {
-        FBO { file: u32::MAX, block: u32::MAX, l_block: u32::MAX, offset: u32::MAX }
+        Fbo { file: u32::MAX, block: u32::MAX, l_block: u32::MAX, offset: u32::MAX }
     }
 }
 
@@ -57,7 +57,7 @@ impl NFSHeader {
         (((total_block_count as u64) * 0x8000u64 + (0x200u64 + 0xF9FFFFFu64)) / 0xFA00000u64) as u32
     }
 
-    pub(crate) fn logical_to_fbo(&self, offset: u64) -> FBO {
+    pub(crate) fn logical_to_fbo(&self, offset: u64) -> Fbo {
         let block_div = (offset / 0x8000) as u32;
         let block_off = (offset % 0x8000) as u32;
         let mut block = u32::MAX;
@@ -70,9 +70,9 @@ impl NFSHeader {
             physical_block += range.num_blocks;
         }
         if block == u32::MAX {
-            FBO::default()
+            Fbo::default()
         } else {
-            FBO { file: block / 8000, block: block % 8000, l_block: block_div, offset: block_off }
+            Fbo { file: block / 8000, block: block % 8000, l_block: block_div, offset: block_off }
         }
     }
 }
@@ -97,7 +97,7 @@ pub(crate) struct NFSReadStream<'a> {
     file: Option<File>,
     crypto: Aes128,
     // Physical address - all UINT32_MAX indicates logical zero block
-    phys_addr: FBO,
+    phys_addr: Fbo,
     // Logical address
     offset: u64,
     // Active file stream and its offset as set in the system.
@@ -127,7 +127,7 @@ impl<'a> NFSReadStream<'a> {
         io::Result::Ok(())
     }
 
-    fn set_phys_addr(&mut self, phys_addr: FBO) -> Result<()> {
+    fn set_phys_addr(&mut self, phys_addr: Fbo) -> Result<()> {
         // If we're just changing the offset, nothing else needs to be done
         if self.phys_addr.file == phys_addr.file && self.phys_addr.block == phys_addr.block {
             self.phys_addr.offset = phys_addr.offset;
@@ -151,12 +151,12 @@ impl<'a> NFSReadStream<'a> {
 
         // Read block, handling 0x200 overlap case
         if phys_addr.block == 7999 {
-            self.file.as_ref().unwrap().read(&mut self.buf[..BUFFER_SIZE - 0x200])?;
+            self.file.as_ref().unwrap().read_exact(&mut self.buf[..BUFFER_SIZE - 0x200])?;
             self.set_cur_file(self.cur_file + 1)?;
-            self.file.as_ref().unwrap().read(&mut self.buf[BUFFER_SIZE - 0x200..])?;
+            self.file.as_ref().unwrap().read_exact(&mut self.buf[BUFFER_SIZE - 0x200..])?;
             self.cur_block = 0;
         } else {
-            self.file.as_ref().unwrap().read(&mut self.buf)?;
+            self.file.as_ref().unwrap().read_exact(&mut self.buf)?;
             self.cur_block += 1;
         }
 
@@ -191,7 +191,7 @@ impl<'a> Read for NFSReadStream<'a> {
                 read_size = BUFFER_SIZE - block_offset
             }
             buf[read..read + read_size]
-                .copy_from_slice(&mut self.buf[block_offset..block_offset + read_size]);
+                .copy_from_slice(&self.buf[block_offset..block_offset + read_size]);
             read += read_size;
             rem -= read_size;
             self.offset += read_size as u64;
@@ -233,7 +233,7 @@ impl DiscIO for DiscIONFS {
             disc_io: self,
             file: Option::None,
             crypto: Aes128::new(&self.key.into()),
-            phys_addr: FBO::default(),
+            phys_addr: Fbo::default(),
             offset,
             cur_file: u32::MAX,
             cur_block: u32::MAX,

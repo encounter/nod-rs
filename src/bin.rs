@@ -5,7 +5,6 @@ use std::{
 };
 
 use clap::{clap_app, AppSettings};
-use file_size;
 use nod::{
     disc::{new_disc_base, PartReadStream},
     fst::NodeType,

@@ -12,10 +12,14 @@ Rust library and CLI tool for reading GameCube and Wii disc images.
 """
 keywords = ["gamecube", "wii", "iso", "nfs", "gcm"]
 categories = ["command-line-utilities", "parser-implementations"]
+rust-version = "1.51"
 
 [[bin]]
 name = "nodtool"
 path = "src/bin.rs"
+
+[profile.release]
+lto = true
 
 [dependencies]
 aes = "0.7.5"
