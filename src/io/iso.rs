@@ -5,11 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{
-    io::DiscIO,
-    streams::{ByteReadStream, ReadStream},
-    Result,
-};
+use crate::{io::DiscIO, streams::ReadStream, Result};
 
 pub(crate) struct DiscIOISO {
     pub(crate) filename: PathBuf,

@@ -6,7 +6,7 @@ use std::{
 };
 
 use aes::{Aes128, NewBlockCipher};
-use binread::{derive_binread, prelude::*};
+use binrw::{binread, BinRead, BinReaderExt};
 use block_modes::{block_padding::NoPadding, BlockMode, Cbc};
 
 use crate::{disc::BUFFER_SIZE, io::DiscIO, streams::ReadStream, Error, Result};
@@ -19,7 +19,7 @@ pub(crate) struct LBARange {
     pub(crate) num_blocks: u32,
 }
 
-#[derive_binread]
+#[binread]
 #[derive(Clone, Debug, PartialEq)]
 #[br(magic = b"EGGS", assert(end_magic == * b"SGGE"))]
 pub(crate) struct NFSHeader {

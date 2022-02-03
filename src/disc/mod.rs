@@ -2,7 +2,7 @@
 
 use std::{fmt::Debug, io};
 
-use binread::{prelude::*, BinReaderExt, NullString};
+use binrw::{BinRead, BinReaderExt, NullString};
 
 use crate::{
     disc::{gcn::DiscGCN, wii::DiscWii},
@@ -82,13 +82,14 @@ pub trait DiscBase: Send + Sync {
     /// # Examples
     ///
     /// Basic usage:
-    /// ```
+    /// ```no_run
     /// use nod::disc::new_disc_base;
     /// use nod::io::new_disc_io;
     ///
     /// let mut disc_io = new_disc_io("path/to/file".as_ref())?;
     /// let disc_base = new_disc_base(disc_io.as_mut())?;
     /// let mut partition = disc_base.get_data_partition(disc_io.as_mut())?;
+    /// # Ok::<(), nod::Error>(())
     /// ```
     fn get_data_partition<'a>(
         &self,
@@ -101,13 +102,14 @@ pub trait DiscBase: Send + Sync {
 /// # Examples
 ///
 /// Basic usage:
-/// ```
+/// ```no_run
 /// use nod::io::new_disc_io;
 /// use nod::disc::new_disc_base;
 ///
 /// let mut disc_io = new_disc_io("path/to/file".as_ref())?;
 /// let disc_base = new_disc_base(disc_io.as_mut())?;
 /// disc_base.get_header();
+/// # Ok::<(), nod::Error>(())
 /// ```
 pub fn new_disc_base(disc_io: &mut dyn DiscIO) -> Result<Box<dyn DiscBase>> {
     let mut stream = disc_io.begin_read_stream(0)?;
@@ -129,7 +131,7 @@ pub trait PartReadStream: ReadStream {
     /// # Examples
     ///
     /// Basic usage:
-    /// ```
+    /// ```no_run
     /// use nod::disc::{new_disc_base, PartHeader};
     /// use nod::fst::NodeType;
     /// use nod::io::new_disc_io;
@@ -142,8 +144,9 @@ pub trait PartReadStream: ReadStream {
     /// if let Some(NodeType::File(node)) = header.find_node("/MP3/Worlds.txt") {
     ///     let mut s = String::new();
     ///     partition.begin_file_stream(node)?.read_to_string(&mut s);
-    ///     println!(s);
+    ///     println!("{}", s);
     /// }
+    /// # Ok::<(), nod::Error>(())
     /// ```
     fn begin_file_stream(&mut self, node: &Node) -> io::Result<SharedWindowedReadStream>;
 
@@ -166,7 +169,7 @@ pub trait PartHeader: Debug + Send + Sync {
     /// # Examples
     ///
     /// Basic usage:
-    /// ```
+    /// ```no_run
     /// use nod::disc::{new_disc_base, PartHeader};
     /// use nod::fst::NodeType;
     /// use nod::io::new_disc_io;
@@ -176,11 +179,12 @@ pub trait PartHeader: Debug + Send + Sync {
     /// let mut partition = disc_base.get_data_partition(disc_io.as_mut())?;
     /// let header = partition.read_header()?;
     /// if let Some(NodeType::File(node)) = header.find_node("/MP1/Metroid1.pak") {
-    ///     println!(node.name);
+    ///     println!("{}", node.name);
     /// }
     /// if let Some(NodeType::Directory(node, children)) = header.find_node("/MP1") {
     ///     println!("Number of files: {}", children.len());
     /// }
+    /// # Ok::<(), nod::Error>(())
     /// ```
     fn find_node(&self, path: &str) -> Option<&NodeType>;
 }

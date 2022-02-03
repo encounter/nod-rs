@@ -29,10 +29,11 @@ pub trait DiscIO: Send + Sync {
 /// # Examples
 ///
 /// Basic usage:
-/// ```
+/// ```no_run
 /// use nod::io::new_disc_io;
 ///
 /// let mut disc_io = new_disc_io("path/to/file".as_ref())?;
+/// # Ok::<(), nod::Error>(())
 /// ```
 pub fn new_disc_io(filename: &Path) -> Result<Box<dyn DiscIO>> {
     let path_result = fs::canonicalize(filename);

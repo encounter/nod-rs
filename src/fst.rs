@@ -2,7 +2,7 @@
 
 use std::io::{Read, Seek, SeekFrom};
 
-use binread::{derive_binread, prelude::*, NullString, ReadOptions};
+use binrw::{binread, BinReaderExt, BinResult, NullString, ReadOptions};
 use encoding_rs::SHIFT_JIS;
 
 /// File system node kind.
@@ -13,7 +13,7 @@ pub enum NodeKind {
 }
 
 /// An individual file system node.
-#[derive_binread]
+#[binread]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     #[br(temp)]
@@ -50,7 +50,7 @@ pub enum NodeType {
 }
 
 fn read_node<R: Read + Seek>(reader: &mut R, ro: &ReadOptions, i: &mut u32) -> BinResult<NodeType> {
-    let node = reader.read_type::<Node>(ro.endian)?;
+    let node = reader.read_type::<Node>(ro.endian())?;
     *i += 1;
     BinResult::Ok(if node.kind == NodeKind::Directory {
         let mut children: Vec<NodeType> = Vec::new();
@@ -75,10 +75,10 @@ fn read_node_name<R: Read + Seek>(
         if !root {
             let offset = base + v.name_offset as u64;
             reader.seek(SeekFrom::Start(offset))?;
-            let null_string = reader.read_type::<NullString>(ro.endian)?;
+            let null_string = reader.read_type::<NullString>(ro.endian())?;
             let (res, _, errors) = SHIFT_JIS.decode(&*null_string.0);
             if errors {
-                return BinResult::Err(binread::Error::Custom {
+                return BinResult::Err(binrw::Error::Custom {
                     pos: offset,
                     err: Box::new("Failed to decode node name"),
                 });

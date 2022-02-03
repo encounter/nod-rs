@@ -10,7 +10,7 @@
 //! # Examples
 //!
 //! Opening a disc image and reading a file:
-//! ```
+//! ```no_run
 //! use nod::disc::{new_disc_base, PartHeader};
 //! use nod::fst::NodeType;
 //! use nod::io::new_disc_io;
@@ -23,8 +23,9 @@
 //! if let Some(NodeType::File(node)) = header.find_node("/MP3/Worlds.txt") {
 //!     let mut s = String::new();
 //!     partition.begin_file_stream(node)?.read_to_string(&mut s);
-//!     println!(s);
+//!     println!("{}", s);
 //! }
+//! # Ok::<(), nod::Error>(())
 //! ```
 use thiserror::Error;
 
@@ -36,7 +37,7 @@ pub mod streams;
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("binary format")]
-    BinaryFormat(#[from] binread::Error),
+    BinaryFormat(#[from] binrw::Error),
     #[error("encryption")]
     Encryption(#[from] block_modes::BlockModeError),
     #[error("io error: `{0}`")]

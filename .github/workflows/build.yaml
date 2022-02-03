@@ -19,6 +19,14 @@ jobs:
           override: true
       - uses: actions-rs/cargo@v1
         with:
+          command: check
+          args: --all-features
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-features
+      - uses: actions-rs/cargo@v1
+        with:
           command: build
           args: --release --all-features
       - uses: actions/upload-artifact@v2

@@ -59,11 +59,7 @@ impl ReadStream for File {
         // Try to restore position even if the above failed
         let seek_result = self.seek(SeekFrom::Start(before));
         if seek_result.is_err() {
-            return if result.is_err() {
-                result
-            } else {
-                seek_result
-            }
+            return if result.is_err() { result } else { seek_result };
         }
         result
     }

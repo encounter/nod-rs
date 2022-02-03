@@ -3,7 +3,7 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 
-use binread::prelude::*;
+use binrw::{BinRead, BinReaderExt};
 
 use crate::{
     disc::{BI2Header, DiscBase, DiscIO, Header, PartHeader, PartReadStream, BUFFER_SIZE},

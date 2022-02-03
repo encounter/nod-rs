@@ -4,7 +4,7 @@ use std::{
 };
 
 use aes::{Aes128, Block, NewBlockCipher};
-use binread::prelude::*;
+use binrw::{BinRead, BinReaderExt};
 use block_modes::{block_padding::NoPadding, BlockMode, Cbc};
 use sha1::{digest, Digest, Sha1};
 
@@ -143,9 +143,7 @@ struct TMD {
 #[derive(Debug, PartialEq, BinRead)]
 struct Certificate {
     sig_type: SigType,
-    #[br(count = if sig_type == SigType::Rsa4096 { 512 }
-    else if sig_type == SigType::Rsa2048 { 256 }
-    else if sig_type == SigType::EllipticalCurve { 64 } else { 0 })]
+    #[br(count = if sig_type == SigType::Rsa4096 { 512 } else if sig_type == SigType::Rsa2048 { 256 } else if sig_type == SigType::EllipticalCurve { 64 } else { 0 })]
     sig: Vec<u8>,
     #[br(pad_before = 60, count = 64)]
     issuer: Vec<u8>,
