@@ -31,6 +31,7 @@ macro_rules! array_ref_mut {
     }};
 }
 
+/// A helper trait for seekable read streams.
 pub trait ReadStream: Read + Seek {
     /// Replace with [`Read.stream_len`] when stabilized.
     ///
@@ -49,6 +50,7 @@ pub trait ReadStream: Read + Seek {
         })
     }
 
+    /// Retrieves a type-erased reference to the stream.
     fn as_dyn(&mut self) -> &mut dyn ReadStream;
 }
 
@@ -72,9 +74,13 @@ trait WindowedReadStream: ReadStream {
     fn window(&self) -> (u64, u64);
 }
 
+/// An window into an existing [`ReadStream`], with ownership of the underlying stream.
 pub struct OwningWindowedReadStream<'a> {
+    /// The base stream.
     pub base: Box<dyn ReadStream + 'a>,
+    /// The beginning of the window in bytes.
     pub begin: u64,
+    /// The end of the window in bytes.
     pub end: u64,
 }
 
@@ -88,13 +94,18 @@ pub fn wrap_windowed<'a>(
     io::Result::Ok(OwningWindowedReadStream { base, begin: offset, end: offset + size })
 }
 
+/// A non-owning window into an existing [`ReadStream`].
 pub struct SharedWindowedReadStream<'a> {
+    /// A reference to the base stream.
     pub base: &'a mut dyn ReadStream,
+    /// The beginning of the window in bytes.
     pub begin: u64,
+    /// The end of the window in bytes.
     pub end: u64,
 }
 
 impl<'a> SharedWindowedReadStream<'a> {
+    /// Modifies the current window & seeks to the beginning of the window.
     pub fn set_window(&mut self, begin: u64, end: u64) -> io::Result<()> {
         self.base.seek(SeekFrom::Start(begin))?;
         self.begin = begin;
@@ -180,8 +191,11 @@ impl<'a> WindowedReadStream for SharedWindowedReadStream<'a> {
     fn window(&self) -> (u64, u64) { (self.begin, self.end) }
 }
 
+/// A non-owning [`ReadStream`] wrapping a byte slice reference.
 pub struct ByteReadStream<'a> {
+    /// A reference to the underlying byte slice.
     pub bytes: &'a [u8],
+    /// The current position in the stream.
     pub position: u64,
 }
 

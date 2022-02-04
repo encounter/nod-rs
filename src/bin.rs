@@ -37,6 +37,7 @@ Phillip Stephens (Antidote)")
             (@arg FILE: +required "Path to disc image (ISO or NFS)")
             (@arg DIR: "Output directory (optional)")
             (@arg quiet: -q "Quiet output")
+            (@arg validate: -h "Validate disc hashes (Wii only)")
         )
     )
     .get_matches();
@@ -57,9 +58,15 @@ Phillip Stephens (Antidote)")
         }
         let mut disc_io = new_disc_io(file.as_path())?;
         let disc_base = new_disc_base(disc_io.as_mut())?;
-        let mut partition = disc_base.get_data_partition(disc_io.as_mut())?;
+        let mut partition =
+            disc_base.get_data_partition(disc_io.as_mut(), matches.is_present("validate"))?;
         let header = partition.read_header()?;
-        extract_node(header.root_node(), partition.as_mut(), output_dir.as_path())?;
+        extract_node(
+            header.root_node(),
+            partition.as_mut(),
+            output_dir.as_path(),
+            matches.is_present("quiet"),
+        )?;
     }
     Result::Ok(())
 }
@@ -68,16 +75,19 @@ fn extract_node(
     node: &NodeType,
     partition: &mut dyn PartReadStream,
     base_path: &Path,
+    quiet: bool,
 ) -> io::Result<()> {
     match node {
         NodeType::File(v) => {
             let mut file_path = base_path.to_owned();
             file_path.push(v.name.as_ref());
-            println!(
-                "Extracting {} (size: {})",
-                file_path.to_string_lossy(),
-                file_size::fit_4(v.length as u64)
-            );
+            if !quiet {
+                println!(
+                    "Extracting {} (size: {})",
+                    file_path.to_string_lossy(),
+                    file_size::fit_4(v.length as u64)
+                );
+            }
             let file = fs::File::create(file_path)?;
             let mut buf_writer = BufWriter::with_capacity(partition.ideal_buffer_size(), file);
             io::copy(&mut partition.begin_file_stream(v)?, &mut buf_writer)?;
@@ -86,14 +96,14 @@ fn extract_node(
             if v.name.is_empty() {
                 fs::create_dir_all(base_path)?;
                 for x in c {
-                    extract_node(x, partition, base_path)?;
+                    extract_node(x, partition, base_path, quiet)?;
                 }
             } else {
                 let mut new_base = base_path.to_owned();
                 new_base.push(v.name.as_ref());
                 fs::create_dir_all(&new_base)?;
                 for x in c {
-                    extract_node(x, partition, new_base.as_path())?;
+                    extract_node(x, partition, new_base.as_path(), quiet)?;
                 }
             }
         }

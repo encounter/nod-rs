@@ -9,6 +9,8 @@ jobs:
     strategy:
       matrix:
         toolchain: [ stable, 1.51.0, nightly ]
+    env:
+      RUSTFLAGS: -D warnings
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1

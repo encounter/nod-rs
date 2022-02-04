@@ -27,6 +27,7 @@ impl DiscBase for DiscGCN {
     fn get_data_partition<'a>(
         &self,
         disc_io: &'a mut dyn DiscIO,
+        _validate_hashes: bool,
     ) -> Result<Box<dyn PartReadStream + 'a>> {
         Result::Ok(Box::from(GCPartReadStream {
             stream: disc_io.begin_read_stream(0)?,

@@ -18,25 +18,32 @@ pub(crate) mod wii;
 /// Shared GameCube & Wii disc header
 #[derive(Clone, Debug, PartialEq, BinRead)]
 pub struct Header {
+    /// Game ID (e.g. GM8E01 for Metroid Prime)
     pub game_id: [u8; 6],
     /// Used in multi-disc games
     pub disc_num: u8,
+    /// Disc version
     pub disc_version: u8,
+    /// Audio streaming enabled (bool)
     pub audio_streaming: u8,
+    /// Audio streaming buffer size
     pub audio_stream_buf_size: u8,
     #[br(pad_before(14))]
     /// If this is a Wii disc, this will be 0x5D1C9EA3
     pub wii_magic: u32,
     /// If this is a GameCube disc, this will be 0xC2339F3D
     pub gcn_magic: u32,
+    /// Game title
     #[br(pad_size_to(64), map = NullString::into_string)]
     pub game_title: String,
     /// Disable hash verification
     pub disable_hash_verification: u8,
     /// Disable disc encryption and H3 hash table loading and verification
     pub disable_disc_enc: u8,
+    /// Debug monitor offset
     #[br(pad_before(0x39e))]
     pub debug_mon_off: u32,
+    /// Debug monitor load address
     pub debug_load_addr: u32,
     #[br(pad_before(0x18))]
     /// Offset to main DOL (Wii: >> 2)
@@ -47,8 +54,11 @@ pub struct Header {
     pub fst_sz: u32,
     /// File system max size
     pub fst_max_sz: u32,
+    /// File system table load address
     pub fst_memory_address: u32,
+    /// User position
     pub user_position: u32,
+    /// User size
     #[br(pad_after(4))]
     pub user_sz: u32,
 }
@@ -79,6 +89,8 @@ pub trait DiscBase: Send + Sync {
 
     /// Opens a new partition read stream for the first data partition.
     ///
+    /// `validate_hashes`: Validate Wii disc hashes while reading (slow!)
+    ///
     /// # Examples
     ///
     /// Basic usage:
@@ -88,12 +100,13 @@ pub trait DiscBase: Send + Sync {
     ///
     /// let mut disc_io = new_disc_io("path/to/file".as_ref())?;
     /// let disc_base = new_disc_base(disc_io.as_mut())?;
-    /// let mut partition = disc_base.get_data_partition(disc_io.as_mut())?;
+    /// let mut partition = disc_base.get_data_partition(disc_io.as_mut(), false)?;
     /// # Ok::<(), nod::Error>(())
     /// ```
     fn get_data_partition<'a>(
         &self,
         disc_io: &'a mut dyn DiscIO,
+        validate_hashes: bool,
     ) -> Result<Box<dyn PartReadStream + 'a>>;
 }
 
@@ -139,7 +152,7 @@ pub trait PartReadStream: ReadStream {
     ///
     /// let mut disc_io = new_disc_io("path/to/file".as_ref())?;
     /// let disc_base = new_disc_base(disc_io.as_mut())?;
-    /// let mut partition = disc_base.get_data_partition(disc_io.as_mut())?;
+    /// let mut partition = disc_base.get_data_partition(disc_io.as_mut(), false)?;
     /// let header = partition.read_header()?;
     /// if let Some(NodeType::File(node)) = header.find_node("/MP3/Worlds.txt") {
     ///     let mut s = String::new();
@@ -176,7 +189,7 @@ pub trait PartHeader: Debug + Send + Sync {
     ///
     /// let mut disc_io = new_disc_io("path/to/file".as_ref())?;
     /// let disc_base = new_disc_base(disc_io.as_mut())?;
-    /// let mut partition = disc_base.get_data_partition(disc_io.as_mut())?;
+    /// let mut partition = disc_base.get_data_partition(disc_io.as_mut(), false)?;
     /// let header = partition.read_header()?;
     /// if let Some(NodeType::File(node)) = header.find_node("/MP1/Metroid1.pak") {
     ///     println!("{}", node.name);

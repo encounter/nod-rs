@@ -8,7 +8,9 @@ use encoding_rs::SHIFT_JIS;
 /// File system node kind.
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeKind {
+    /// Node is a file.
     File,
+    /// Node is a directory.
     Directory,
 }
 
@@ -18,6 +20,8 @@ pub enum NodeKind {
 pub struct Node {
     #[br(temp)]
     type_and_name_offset: u32,
+
+    /// File system node type.
     #[br(calc = if (type_and_name_offset >> 24) != 0 { NodeKind::Directory } else { NodeKind::File })]
     pub kind: NodeKind,
 

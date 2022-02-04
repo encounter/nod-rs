@@ -70,10 +70,34 @@ pub fn new_disc_io(filename: &Path) -> Result<Box<dyn DiscIO>> {
     }
 }
 
+/// Creates a new [`DiscIO`] instance from a byte slice.
+///
+/// # Examples
+///
+/// Basic usage:
+/// ```no_run
+/// use nod::io::new_disc_io_from_buf;
+///
+/// # #[allow(non_upper_case_globals)] const buf: [u8; 0] = [];
+/// let mut disc_io = new_disc_io_from_buf(&buf)?;
+/// # Ok::<(), nod::Error>(())
+/// ```
 pub fn new_disc_io_from_buf(buf: &[u8]) -> Result<Box<dyn DiscIO + '_>> {
-    Ok(Box::from(DiscIOISOStream::new(ByteReadStream { bytes: buf, position: 0 })?))
+    new_disc_io_from_stream(ByteReadStream { bytes: buf, position: 0 })
 }
 
+/// Creates a new [`DiscIO`] instance from an existing [`ReadStream`].
+///
+/// # Examples
+///
+/// Basic usage:
+/// ```no_run
+/// use nod::io::new_disc_io_from_buf;
+///
+/// # #[allow(non_upper_case_globals)] const buf: [u8; 0] = [];
+/// let mut disc_io = new_disc_io_from_buf(&buf)?;
+/// # Ok::<(), nod::Error>(())
+/// ```
 pub fn new_disc_io_from_stream<'a, T: 'a + ReadStream + Sized + Send + Sync>(
     stream: T,
 ) -> Result<Box<dyn DiscIO + 'a>> {

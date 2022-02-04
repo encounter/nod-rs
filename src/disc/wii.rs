@@ -220,6 +220,7 @@ impl DiscBase for DiscWii {
     fn get_data_partition<'a>(
         &self,
         disc_io: &'a mut dyn DiscIO,
+        validate_hashes: bool,
     ) -> Result<Box<dyn PartReadStream + 'a>> {
         let part = self
             .part_info
@@ -243,7 +244,7 @@ impl DiscBase for DiscWii {
             offset: 0,
             cur_block: u64::MAX,
             buf: [0; 0x8000],
-            validate_hashes: false,
+            validate_hashes,
         });
         Result::Ok(result)
     }
