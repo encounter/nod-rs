@@ -6,7 +6,7 @@
 [crates.io]: https://crates.io/crates/nod
 [Api Rustdoc]: https://img.shields.io/badge/api-rustdoc-blue.svg
 [rustdoc]: https://docs.rs/nod
-[Rust Version]: https://img.shields.io/badge/rust-1.51+-blue.svg?maxAge=3600
+[Rust Version]: https://img.shields.io/badge/rust-1.57+-blue.svg?maxAge=3600
 
 Library for traversing & reading GameCube and Wii disc images.
 
@@ -54,7 +54,11 @@ fn main() -> nod::Result<()> {
     let header = partition.read_header()?;
     if let Some(NodeType::File(node)) = header.find_node("/MP3/Worlds.txt") {
         let mut s = String::new();
-        partition.begin_file_stream(node)?.read_to_string(&mut s).expect("Failed to read file");
+        partition
+            .begin_file_stream(node)
+            .expect("Failed to open file stream")
+            .read_to_string(&mut s)
+            .expect("Failed to read file");
         println!("{}", s);
     }
     Ok(())

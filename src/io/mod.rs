@@ -99,8 +99,7 @@ pub fn new_disc_io_from_buf(buf: &[u8]) -> Result<Box<dyn DiscIO + '_>> {
 ///
 /// Basic usage:
 /// ```no_run
-/// use nod::io::new_disc_io_from_stream;
-/// use nod::streams::ByteReadStream;
+/// use nod::{io::new_disc_io_from_stream, streams::ByteReadStream};
 ///
 /// # fn main() -> nod::Result<()> {
 /// # #[allow(non_upper_case_globals)] const buf: &[u8] = &[0u8; 0];

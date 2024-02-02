@@ -329,7 +329,11 @@ pub trait PartReadStream: ReadStream {
     ///     let header = partition.read_header()?;
     ///     if let Some(NodeType::File(node)) = header.find_node("/MP3/Worlds.txt") {
     ///         let mut s = String::new();
-    ///         partition.begin_file_stream(node)?.read_to_string(&mut s).expect("Failed to read file");
+    ///         partition
+    ///             .begin_file_stream(node)
+    ///             .expect("Failed to open file stream")
+    ///             .read_to_string(&mut s)
+    ///             .expect("Failed to read file");
     ///         println!("{}", s);
     ///     }
     ///     Ok(())

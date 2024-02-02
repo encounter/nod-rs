@@ -2,7 +2,7 @@
 name = "nod"
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.56.0"
+rust-version = "1.57.0"
 authors = ["Luke Street <luke@street.dev>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/encounter/nod-rs"
