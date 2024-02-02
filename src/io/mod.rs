@@ -6,6 +6,7 @@ use crate::{
     io::{
         iso::{DiscIOISO, DiscIOISOStream},
         nfs::DiscIONFS,
+        wia::DiscIOWIA,
     },
     streams::{ByteReadStream, ReadStream},
     Error, Result,
@@ -13,6 +14,13 @@ use crate::{
 
 pub(crate) mod iso;
 pub(crate) mod nfs;
+pub(crate) mod wia;
+
+#[derive(Default, Debug, Clone)]
+pub struct DiscIOOptions {
+    /// Rebuild hashes for the disc image.
+    pub rebuild_hashes: bool,
+}
 
 /// Abstraction over supported disc file types.
 pub trait DiscIO: Send + Sync {
@@ -30,43 +38,40 @@ pub trait DiscIO: Send + Sync {
 ///
 /// Basic usage:
 /// ```no_run
-/// use nod::io::new_disc_io;
+/// use nod::io::{new_disc_io, DiscIOOptions};
 ///
-/// let mut disc_io = new_disc_io("path/to/file".as_ref())?;
-/// # Ok::<(), nod::Error>(())
+/// # fn main() -> nod::Result<()> {
+/// let options = DiscIOOptions::default();
+/// let mut disc_io = new_disc_io("path/to/file.iso".as_ref(), &options)?;
+/// # Ok(())
+/// # }
 /// ```
-pub fn new_disc_io(filename: &Path) -> Result<Box<dyn DiscIO>> {
+pub fn new_disc_io(filename: &Path, options: &DiscIOOptions) -> Result<Box<dyn DiscIO>> {
     let path_result = fs::canonicalize(filename);
     if let Err(err) = path_result {
-        return Result::Err(Error::Io(
-            format!("Failed to open {}", filename.to_string_lossy()),
-            err,
-        ));
+        return Err(Error::Io(format!("Failed to open {}", filename.display()), err));
     }
     let path = path_result.as_ref().unwrap();
     let meta = fs::metadata(path);
     if let Err(err) = meta {
-        return Result::Err(Error::Io(
-            format!("Failed to open {}", filename.to_string_lossy()),
-            err,
-        ));
+        return Err(Error::Io(format!("Failed to open {}", filename.display()), err));
     }
     if !meta.unwrap().is_file() {
-        return Result::Err(Error::DiscFormat(format!(
-            "Input is not a file: {}",
-            filename.to_string_lossy()
-        )));
+        return Err(Error::DiscFormat(format!("Input is not a file: {}", filename.display())));
     }
     if has_extension(path, "iso") {
-        Result::Ok(Box::from(DiscIOISO::new(path)?))
+        Ok(Box::from(DiscIOISO::new(path)?))
     } else if has_extension(path, "nfs") {
-        if matches!(path.parent(), Some(parent) if parent.is_dir()) {
-            Result::Ok(Box::from(DiscIONFS::new(path.parent().unwrap())?))
-        } else {
-            Result::Err(Error::DiscFormat("Failed to locate NFS parent directory".to_string()))
+        match path.parent() {
+            Some(parent) if parent.is_dir() => {
+                Ok(Box::from(DiscIONFS::new(path.parent().unwrap())?))
+            }
+            _ => Err(Error::DiscFormat("Failed to locate NFS parent directory".to_string())),
         }
+    } else if has_extension(path, "wia") || has_extension(path, "rvz") {
+        Ok(Box::from(DiscIOWIA::new(path, options)?))
     } else {
-        Result::Err(Error::DiscFormat("Unknown file type".to_string()))
+        Err(Error::DiscFormat("Unknown file type".to_string()))
     }
 }
 
@@ -78,9 +83,11 @@ pub fn new_disc_io(filename: &Path) -> Result<Box<dyn DiscIO>> {
 /// ```no_run
 /// use nod::io::new_disc_io_from_buf;
 ///
-/// # #[allow(non_upper_case_globals)] const buf: [u8; 0] = [];
-/// let mut disc_io = new_disc_io_from_buf(&buf)?;
-/// # Ok::<(), nod::Error>(())
+/// # fn main() -> nod::Result<()> {
+/// # #[allow(non_upper_case_globals)] const buf: &[u8] = &[0u8; 0];
+/// let mut disc_io = new_disc_io_from_buf(buf)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn new_disc_io_from_buf(buf: &[u8]) -> Result<Box<dyn DiscIO + '_>> {
     new_disc_io_from_stream(ByteReadStream { bytes: buf, position: 0 })
@@ -92,11 +99,15 @@ pub fn new_disc_io_from_buf(buf: &[u8]) -> Result<Box<dyn DiscIO + '_>> {
 ///
 /// Basic usage:
 /// ```no_run
-/// use nod::io::new_disc_io_from_buf;
+/// use nod::io::new_disc_io_from_stream;
+/// use nod::streams::ByteReadStream;
 ///
-/// # #[allow(non_upper_case_globals)] const buf: [u8; 0] = [];
-/// let mut disc_io = new_disc_io_from_buf(&buf)?;
-/// # Ok::<(), nod::Error>(())
+/// # fn main() -> nod::Result<()> {
+/// # #[allow(non_upper_case_globals)] const buf: &[u8] = &[0u8; 0];
+/// let stream = ByteReadStream { bytes: buf, position: 0 };
+/// let mut disc_io = new_disc_io_from_stream(stream)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn new_disc_io_from_stream<'a, T: 'a + ReadStream + Sized + Send + Sync>(
     stream: T,
@@ -107,11 +118,8 @@ pub fn new_disc_io_from_stream<'a, T: 'a + ReadStream + Sized + Send + Sync>(
 /// Helper function for checking a file extension.
 #[inline(always)]
 pub fn has_extension(filename: &Path, extension: &str) -> bool {
-    if let Some(ext) = filename.extension() {
-        // TODO use with Rust 1.53+
-        // ext.eq_ignore_ascii_case(extension)
-        ext.to_str().unwrap_or("").eq_ignore_ascii_case(extension)
-    } else {
-        false
+    match filename.extension() {
+        Some(ext) => ext.eq_ignore_ascii_case(extension),
+        None => false,
     }
 }

@@ -14,7 +14,9 @@ Based on the C++ library [nod](https://github.com/AxioDL/nod),
 but does not currently support authoring.
 
 Currently supported file formats:
-- ISO
+- ISO (GCM)
+- WIA / RVZ
+- WBFS
 - NFS (Wii U VC files, e.g. `hif_000000.nfs`)
 
 ### CLI tool
@@ -34,20 +36,28 @@ nodtool extract /path/to/game/content/hif_000000.nfs [outdir]
 ### Library example
 
 Opening a disc image and reading a file:
+
 ```rust
-use nod::disc::{new_disc_base, PartHeader};
-use nod::fst::NodeType;
-use nod::io::new_disc_io;
 use std::io::Read;
 
-let mut disc_io = new_disc_io("path/to/file".as_ref())?;
-let disc_base = new_disc_base(disc_io.as_mut())?;
-let mut partition = disc_base.get_data_partition(disc_io.as_mut())?;
-let header = partition.read_header()?;
-if let Some(NodeType::File(node)) = header.find_node("/MP3/Worlds.txt") {
-    let mut s = String::new();
-    partition.begin_file_stream(node)?.read_to_string(&mut s);
-    println!(s);
+use nod::{
+    disc::{new_disc_base, PartHeader},
+    fst::NodeType,
+    io::{new_disc_io, DiscIOOptions},
+};
+
+fn main() -> nod::Result<()> {
+    let options = DiscIOOptions::default();
+    let mut disc_io = new_disc_io("path/to/file.iso".as_ref(), &options)?;
+    let disc_base = new_disc_base(disc_io.as_mut())?;
+    let mut partition = disc_base.get_data_partition(disc_io.as_mut(), false)?;
+    let header = partition.read_header()?;
+    if let Some(NodeType::File(node)) = header.find_node("/MP3/Worlds.txt") {
+        let mut s = String::new();
+        partition.begin_file_stream(node)?.read_to_string(&mut s).expect("Failed to read file");
+        println!("{}", s);
+    }
+    Ok(())
 }
 ```
 

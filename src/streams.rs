@@ -43,11 +43,7 @@ pub trait ReadStream: Read + Seek {
     /// Seeks underlying stream immediately.
     fn new_window(&mut self, offset: u64, size: u64) -> io::Result<SharedWindowedReadStream> {
         self.seek(SeekFrom::Start(offset))?;
-        io::Result::Ok(SharedWindowedReadStream {
-            base: self.as_dyn(),
-            begin: offset,
-            end: offset + size,
-        })
+        Ok(SharedWindowedReadStream { base: self.as_dyn(), begin: offset, end: offset + size })
     }
 
     /// Retrieves a type-erased reference to the stream.
@@ -91,7 +87,7 @@ pub fn wrap_windowed<'a>(
     size: u64,
 ) -> io::Result<OwningWindowedReadStream<'a>> {
     base.seek(SeekFrom::Start(offset))?;
-    io::Result::Ok(OwningWindowedReadStream { base, begin: offset, end: offset + size })
+    Ok(OwningWindowedReadStream { base, begin: offset, end: offset + size })
 }
 
 /// A non-owning window into an existing [`ReadStream`].
@@ -110,7 +106,7 @@ impl<'a> SharedWindowedReadStream<'a> {
         self.base.seek(SeekFrom::Start(begin))?;
         self.begin = begin;
         self.end = end;
-        io::Result::Ok(())
+        Ok(())
     }
 }
 
@@ -137,9 +133,9 @@ fn windowed_seek(stream: &mut dyn WindowedReadStream, pos: SeekFrom) -> io::Resu
         SeekFrom::Current(_) => pos,
     })?;
     if result < begin || result > end {
-        io::Result::Err(io::Error::from(io::ErrorKind::UnexpectedEof))
+        Err(io::Error::from(io::ErrorKind::UnexpectedEof))
     } else {
-        io::Result::Ok(result - begin)
+        Ok(result - begin)
     }
 }
 
@@ -151,12 +147,12 @@ impl<'a> Seek for OwningWindowedReadStream<'a> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> { windowed_seek(self, pos) }
 
     fn stream_position(&mut self) -> io::Result<u64> {
-        Result::Ok(self.base.stream_position()? - self.begin)
+        Ok(self.base.stream_position()? - self.begin)
     }
 }
 
 impl<'a> ReadStream for OwningWindowedReadStream<'a> {
-    fn stable_stream_len(&mut self) -> io::Result<u64> { Result::Ok(self.end - self.begin) }
+    fn stable_stream_len(&mut self) -> io::Result<u64> { Ok(self.end - self.begin) }
 
     fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
 }
@@ -175,12 +171,12 @@ impl<'a> Seek for SharedWindowedReadStream<'a> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> { windowed_seek(self, pos) }
 
     fn stream_position(&mut self) -> io::Result<u64> {
-        Result::Ok(self.base.stream_position()? - self.begin)
+        Ok(self.base.stream_position()? - self.begin)
     }
 }
 
 impl<'a> ReadStream for SharedWindowedReadStream<'a> {
-    fn stable_stream_len(&mut self) -> io::Result<u64> { Result::Ok(self.end - self.begin) }
+    fn stable_stream_len(&mut self) -> io::Result<u64> { Ok(self.end - self.begin) }
 
     fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
 }
