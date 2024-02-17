@@ -3,8 +3,7 @@
 use std::{
     fs::File,
     io,
-    io::{Read, Seek, SeekFrom},
-    ops::DerefMut,
+    io::{BufReader, Read, Seek, SeekFrom},
 };
 
 /// Creates a fixed-size array reference from a slice.
@@ -29,6 +28,14 @@ macro_rules! array_ref_mut {
         }
         to_array(&mut $slice[$offset..$offset + $size])
     }};
+}
+
+/// Compile-time assertion.
+#[macro_export]
+macro_rules! static_assert {
+    ($condition:expr) => {
+        const _: () = core::assert!($condition);
+    };
 }
 
 /// A helper trait for seekable read streams.
@@ -65,12 +72,20 @@ impl ReadStream for File {
     fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
 }
 
+impl<T> ReadStream for BufReader<T>
+where T: ReadStream
+{
+    fn stable_stream_len(&mut self) -> io::Result<u64> { self.get_mut().stable_stream_len() }
+
+    fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
+}
+
 trait WindowedReadStream: ReadStream {
     fn base_stream(&mut self) -> &mut dyn ReadStream;
     fn window(&self) -> (u64, u64);
 }
 
-/// An window into an existing [`ReadStream`], with ownership of the underlying stream.
+/// A window into an existing [`ReadStream`], with ownership of the underlying stream.
 pub struct OwningWindowedReadStream<'a> {
     /// The base stream.
     pub base: Box<dyn ReadStream + 'a>,
@@ -111,7 +126,7 @@ impl<'a> SharedWindowedReadStream<'a> {
 }
 
 #[inline(always)]
-fn windowed_read(stream: &mut dyn WindowedReadStream, buf: &mut [u8]) -> io::Result<usize> {
+fn windowed_read(stream: &mut impl WindowedReadStream, buf: &mut [u8]) -> io::Result<usize> {
     let pos = stream.stream_position()?;
     let size = stream.stable_stream_len()?;
     if pos == size {
@@ -125,7 +140,7 @@ fn windowed_read(stream: &mut dyn WindowedReadStream, buf: &mut [u8]) -> io::Res
 }
 
 #[inline(always)]
-fn windowed_seek(stream: &mut dyn WindowedReadStream, pos: SeekFrom) -> io::Result<u64> {
+fn windowed_seek(stream: &mut impl WindowedReadStream, pos: SeekFrom) -> io::Result<u64> {
     let (begin, end) = stream.window();
     let result = stream.base_stream().seek(match pos {
         SeekFrom::Start(p) => SeekFrom::Start(begin + p),
@@ -158,7 +173,7 @@ impl<'a> ReadStream for OwningWindowedReadStream<'a> {
 }
 
 impl<'a> WindowedReadStream for OwningWindowedReadStream<'a> {
-    fn base_stream(&mut self) -> &mut dyn ReadStream { self.base.deref_mut() }
+    fn base_stream(&mut self) -> &mut dyn ReadStream { self.base.as_dyn() }
 
     fn window(&self) -> (u64, u64) { (self.begin, self.end) }
 }
@@ -219,8 +234,8 @@ impl Seek for ByteReadStream<'_> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let new_pos = match pos {
             SeekFrom::Start(v) => v,
-            SeekFrom::End(v) => (self.bytes.len() as i64 + v) as u64,
-            SeekFrom::Current(v) => (self.position as i64 + v) as u64,
+            SeekFrom::End(v) => (self.bytes.len() as u64).saturating_add_signed(v),
+            SeekFrom::Current(v) => self.position.saturating_add_signed(v),
         };
         if new_pos > self.bytes.len() as u64 {
             Err(io::Error::from(io::ErrorKind::UnexpectedEof))

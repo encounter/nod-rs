@@ -1,5 +1,6 @@
 use std::ops::{Div, Rem};
 
+pub(crate) mod compress;
 pub(crate) mod lfg;
 pub(crate) mod reader;
 pub(crate) mod take_seek;

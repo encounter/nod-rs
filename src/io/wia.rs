@@ -2,15 +2,16 @@ use std::{
     cmp::min,
     fs::File,
     io,
-    io::{BufReader, Read, Seek, SeekFrom, Write},
+    io::{BufReader, Read, Seek, SeekFrom},
+    mem::size_of,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::Instant,
 };
 
-use aes::{
-    cipher::{block_padding::NoPadding, BlockEncryptMut, KeyIvInit},
-    Aes128, Block,
-};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use sha1::{Digest, Sha1};
+use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
 
 use crate::{
     array_ref, array_ref_mut,
@@ -18,68 +19,27 @@ use crate::{
         wii::{BLOCK_SIZE, HASHES_SIZE},
         SECTOR_SIZE,
     },
-    io::{DiscIO, DiscIOOptions},
+    io::{aes_encrypt, nkit::NKitHeader, DiscIO, DiscMeta, HashBytes, KeyBytes, MagicBytes},
+    static_assert,
     streams::ReadStream,
     util::{
+        compress::{lzma2_props_decode, lzma_props_decode, new_lzma2_decoder, new_lzma_decoder},
         lfg::LaggedFibonacci,
-        reader::{
-            read_bytes, read_vec, struct_size, write_vec, FromReader, ToWriter, DYNAMIC_SIZE,
-        },
+        reader::{read_from, read_u16_be, read_vec},
         take_seek::TakeSeekExt,
     },
-    Error, Result, ResultContext,
+    Error, OpenOptions, Result, ResultContext,
 };
 
-/// SHA-1 hash bytes
-type HashBytes = [u8; 20];
-
-/// AES key bytes
-type KeyBytes = [u8; 16];
-
-/// Magic bytes
-type MagicBytes = [u8; 4];
-
-/// AES-128-CBC encryptor
-type Aes128Cbc = cbc::Encryptor<Aes128>;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum WIARVZMagic {
-    Wia,
-    Rvz,
-}
-
-impl FromReader for WIARVZMagic {
-    type Args<'a> = ();
-
-    const STATIC_SIZE: usize = MagicBytes::STATIC_SIZE;
-
-    fn from_reader_args<R>(reader: &mut R, _args: Self::Args<'_>) -> io::Result<Self>
-    where R: Read + ?Sized {
-        match &MagicBytes::from_reader(reader)? {
-            b"WIA\x01" => Ok(Self::Wia),
-            b"RVZ\x01" => Ok(Self::Rvz),
-            _ => Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid WIA/RVZ magic")),
-        }
-    }
-}
-
-impl ToWriter for WIARVZMagic {
-    fn to_writer<W>(&self, writer: &mut W) -> io::Result<()>
-    where W: Write + ?Sized {
-        match self {
-            Self::Wia => b"WIA\x01".to_writer(writer),
-            Self::Rvz => b"RVZ\x01".to_writer(writer),
-        }
-    }
-
-    fn write_size(&self) -> usize { Self::STATIC_SIZE }
-}
+pub const WIA_MAGIC: MagicBytes = *b"WIA\x01";
+pub const RVZ_MAGIC: MagicBytes = *b"RVZ\x01";
 
 /// This struct is stored at offset 0x0 and is 0x48 bytes long. The wit source code says its format
 /// will never be changed.
-#[derive(Clone, Debug)]
-pub(crate) struct WIAFileHeader {
-    pub(crate) magic: WIARVZMagic,
+#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[repr(C, align(4))]
+pub struct WIAFileHeader {
+    pub magic: MagicBytes,
     /// The WIA format version.
     ///
     /// A short note from the wit source code about how version numbers are encoded:
@@ -90,173 +50,113 @@ pub(crate) struct WIAFileHeader {
     /// // If D != 0x00 && D != 0xff => append: 'beta' D
     /// //-----------------------------------------------------
     /// ```
-    pub(crate) version: u32,
+    pub version: U32,
     /// If the reading program supports the version of WIA indicated here, it can read the file.
     ///
     /// [version](Self::version) can be higher than `version_compatible`.
-    pub(crate) version_compatible: u32,
+    pub version_compatible: U32,
     /// The size of the [WIADisc] struct.
-    pub(crate) disc_size: u32,
+    pub disc_size: U32,
     /// The SHA-1 hash of the [WIADisc] struct.
     ///
     /// The number of bytes to hash is determined by [disc_size](Self::disc_size).
-    pub(crate) disc_hash: HashBytes,
+    pub disc_hash: HashBytes,
     /// The original size of the ISO.
-    pub(crate) iso_file_size: u64,
+    pub iso_file_size: U64,
     /// The size of this file.
-    pub(crate) wia_file_size: u64,
+    pub wia_file_size: U64,
     /// The SHA-1 hash of this struct, up to but not including `file_head_hash` itself.
-    pub(crate) file_head_hash: HashBytes,
+    pub file_head_hash: HashBytes,
 }
 
-impl FromReader for WIAFileHeader {
-    type Args<'a> = ();
+static_assert!(size_of::<WIAFileHeader>() == 0x48);
 
-    const STATIC_SIZE: usize = struct_size([
-        WIARVZMagic::STATIC_SIZE, // magic
-        u32::STATIC_SIZE,         // version
-        u32::STATIC_SIZE,         // version_compatible
-        u32::STATIC_SIZE,         // disc_size
-        HashBytes::STATIC_SIZE,   // disc_hash
-        u64::STATIC_SIZE,         // iso_file_size
-        u64::STATIC_SIZE,         // wia_file_size
-        HashBytes::STATIC_SIZE,   // file_head_hash
-    ]);
-
-    fn from_reader_args<R>(reader: &mut R, _args: Self::Args<'_>) -> io::Result<Self>
-    where R: Read + ?Sized {
-        Ok(Self {
-            magic: <_>::from_reader(reader)?,
-            version: <_>::from_reader(reader)?,
-            version_compatible: <_>::from_reader(reader)?,
-            disc_size: <_>::from_reader(reader)?,
-            disc_hash: <_>::from_reader(reader)?,
-            iso_file_size: <_>::from_reader(reader)?,
-            wia_file_size: <_>::from_reader(reader)?,
-            file_head_hash: <_>::from_reader(reader)?,
-        })
-    }
-}
-
-impl ToWriter for WIAFileHeader {
-    fn to_writer<W>(&self, writer: &mut W) -> io::Result<()>
-    where W: Write + ?Sized {
-        let mut buf = [0u8; Self::STATIC_SIZE - HashBytes::STATIC_SIZE];
-        let mut out = buf.as_mut();
-        self.magic.to_writer(&mut out)?;
-        self.version.to_writer(&mut out)?;
-        self.version_compatible.to_writer(&mut out)?;
-        self.disc_size.to_writer(&mut out)?;
-        self.disc_hash.to_writer(&mut out)?;
-        self.iso_file_size.to_writer(&mut out)?;
-        self.wia_file_size.to_writer(&mut out)?;
-        buf.to_writer(writer)?;
-        // Calculate and write the hash
-        hash_bytes(&buf).to_writer(writer)?;
+impl WIAFileHeader {
+    pub fn validate(&self) -> Result<()> {
+        // Check magic
+        if self.magic != WIA_MAGIC && self.magic != RVZ_MAGIC {
+            return Err(Error::DiscFormat(format!("Invalid WIA/RVZ magic: {:#X?}", self.magic)));
+        }
+        // Check file head hash
+        let bytes = self.as_bytes();
+        verify_hash(&bytes[..bytes.len() - size_of::<HashBytes>()], &self.file_head_hash)?;
+        // Check version compatibility
+        if self.version_compatible.get() < 0x30000 {
+            return Err(Error::DiscFormat(format!(
+                "WIA/RVZ version {:#X} is not supported",
+                self.version_compatible
+            )));
+        }
         Ok(())
     }
 
-    fn write_size(&self) -> usize { Self::STATIC_SIZE }
+    pub fn is_rvz(&self) -> bool { self.magic == RVZ_MAGIC }
 }
 
 /// Disc type
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DiscType {
+pub enum DiscType {
     /// GameCube disc
-    GameCube = 1,
+    GameCube,
     /// Wii disc
-    Wii = 2,
+    Wii,
 }
 
-impl FromReader for DiscType {
-    type Args<'a> = ();
+impl TryFrom<u32> for DiscType {
+    type Error = Error;
 
-    const STATIC_SIZE: usize = u32::STATIC_SIZE;
-
-    fn from_reader_args<R>(reader: &mut R, _args: Self::Args<'_>) -> io::Result<Self>
-    where R: Read + ?Sized {
-        match u32::from_reader(reader)? {
+    fn try_from(value: u32) -> Result<Self> {
+        match value {
             1 => Ok(Self::GameCube),
             2 => Ok(Self::Wii),
-            _ => Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid disc type")),
+            v => Err(Error::DiscFormat(format!("Invalid disc type {}", v))),
         }
     }
-}
-
-impl ToWriter for DiscType {
-    fn to_writer<W>(&self, writer: &mut W) -> io::Result<()>
-    where W: Write + ?Sized {
-        match self {
-            Self::GameCube => 1u32.to_writer(writer),
-            Self::Wii => 2u32.to_writer(writer),
-        }
-    }
-
-    fn write_size(&self) -> usize { Self::STATIC_SIZE }
 }
 
 /// Compression type
-#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Compression {
+pub enum Compression {
     /// No compression.
-    None = 0,
+    None,
     /// (WIA only) See [WIASegment]
-    Purge = 1,
+    Purge,
     /// BZIP2 compression
-    Bzip2 = 2,
+    Bzip2,
     /// LZMA compression
-    Lzma = 3,
+    Lzma,
     /// LZMA2 compression
-    Lzma2 = 4,
+    Lzma2,
     /// (RVZ only) Zstandard compression
-    Zstandard = 5,
+    Zstandard,
 }
 
-impl FromReader for Compression {
-    type Args<'a> = ();
+impl TryFrom<u32> for Compression {
+    type Error = Error;
 
-    const STATIC_SIZE: usize = u32::STATIC_SIZE;
-
-    fn from_reader_args<R>(reader: &mut R, _args: Self::Args<'_>) -> io::Result<Self>
-    where R: Read + ?Sized {
-        match u32::from_reader(reader)? {
+    fn try_from(value: u32) -> Result<Self> {
+        match value {
             0 => Ok(Self::None),
             1 => Ok(Self::Purge),
             2 => Ok(Self::Bzip2),
             3 => Ok(Self::Lzma),
             4 => Ok(Self::Lzma2),
             5 => Ok(Self::Zstandard),
-            _ => Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid compression type")),
+            v => Err(Error::DiscFormat(format!("Invalid compression type {}", v))),
         }
     }
-}
-
-impl ToWriter for Compression {
-    fn to_writer<W>(&self, writer: &mut W) -> io::Result<()>
-    where W: Write + ?Sized {
-        match self {
-            Self::None => 0u32.to_writer(writer),
-            Self::Purge => 1u32.to_writer(writer),
-            Self::Bzip2 => 2u32.to_writer(writer),
-            Self::Lzma => 3u32.to_writer(writer),
-            Self::Lzma2 => 4u32.to_writer(writer),
-            Self::Zstandard => 5u32.to_writer(writer),
-        }
-    }
-
-    fn write_size(&self) -> usize { Self::STATIC_SIZE }
 }
 
 const DISC_HEAD_SIZE: usize = 0x80;
 
 /// This struct is stored at offset 0x48, immediately after [WIAFileHeader].
-#[derive(Clone, Debug)]
-pub(crate) struct WIADisc {
-    /// The disc type.
-    pub(crate) disc_type: DiscType,
+#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[repr(C, align(4))]
+pub struct WIADisc {
+    /// The disc type. (1 = GameCube, 2 = Wii)
+    pub disc_type: U32,
     /// The compression type.
-    pub(crate) compression: Compression,
+    pub compression: U32,
     /// The compression level used by the compressor.
     ///
     /// The possible values are compressor-specific.
@@ -264,7 +164,7 @@ pub(crate) struct WIADisc {
     /// RVZ only:
     /// > This is signed (instead of unsigned) to support negative compression levels in
     ///   [Zstandard](Compression::Zstandard) (RVZ only).
-    pub(crate) compression_level: i32,
+    pub compression_level: I32,
     /// The size of the chunks that data is divided into.
     ///
     /// WIA only:
@@ -279,35 +179,35 @@ pub(crate) struct WIADisc {
     /// > - For Wii partition data, each chunk contains one [WIAExceptionList] which contains
     ///     exceptions for that chunk (and no other chunks). Offset 0 refers to the first hash of the
     ///     current chunk, not the first hash of the full 2 MiB of data.
-    pub(crate) chunk_size: u32,
+    pub chunk_size: U32,
     /// The first 0x80 bytes of the disc image.
-    pub(crate) disc_head: [u8; DISC_HEAD_SIZE],
+    pub disc_head: [u8; DISC_HEAD_SIZE],
     /// The number of [WIAPartition] structs.
-    pub(crate) num_partitions: u32,
+    pub num_partitions: U32,
     /// The size of one [WIAPartition] struct.
     ///
     /// If this is smaller than the size of [WIAPartition], fill the missing bytes with 0x00.
-    pub(crate) partition_type_size: u32,
+    pub partition_type_size: U32,
     /// The offset in the file where the [WIAPartition] structs are stored (uncompressed).
-    pub(crate) partition_offset: u64,
+    pub partition_offset: U64,
     /// The SHA-1 hash of the [WIAPartition] structs.
     ///
     /// The number of bytes to hash is determined by `num_partitions * partition_type_size`.
-    pub(crate) partition_hash: HashBytes,
+    pub partition_hash: HashBytes,
     /// The number of [WIARawData] structs.
-    pub(crate) num_raw_data: u32,
+    pub num_raw_data: U32,
     /// The offset in the file where the [WIARawData] structs are stored (compressed).
-    pub(crate) raw_data_offset: u64,
+    pub raw_data_offset: U64,
     /// The total compressed size of the [WIARawData] structs.
-    pub(crate) raw_data_size: u32,
+    pub raw_data_size: U32,
     /// The number of [WIAGroup] structs.
-    pub(crate) num_groups: u32,
+    pub num_groups: U32,
     /// The offset in the file where the [WIAGroup] structs are stored (compressed).
-    pub(crate) group_offset: u64,
+    pub group_offset: U64,
     /// The total compressed size of the [WIAGroup] structs.
-    pub(crate) group_size: u32,
+    pub group_size: U32,
     /// The number of used bytes in the [compr_data](Self::compr_data) array.
-    pub(crate) compr_data_len: u8,
+    pub compr_data_len: u8,
     /// Compressor specific data.
     ///
     /// If the compression method is [None](Compression::None), [Purge](Compression::Purge),
@@ -320,130 +220,47 @@ pub(crate) struct WIADisc {
     /// For [Lzma](Compression::Lzma), the data is 5 bytes long. The first byte encodes the `lc`,
     /// `pb`, and `lp` parameters, and the four other bytes encode the dictionary size in little
     /// endian.
-    pub(crate) compr_data: [u8; 7],
+    pub compr_data: [u8; 7],
 }
 
-impl FromReader for WIADisc {
-    type Args<'a> = ();
+static_assert!(size_of::<WIADisc>() == 0xDC);
 
-    const STATIC_SIZE: usize = struct_size([
-        DiscType::STATIC_SIZE,    // disc_type
-        Compression::STATIC_SIZE, // compression
-        i32::STATIC_SIZE,         // compression_level
-        u32::STATIC_SIZE,         // chunk_size
-        DISC_HEAD_SIZE,           // disc_head
-        u32::STATIC_SIZE,         // num_partitions
-        u32::STATIC_SIZE,         // partition_type_size
-        u64::STATIC_SIZE,         // partition_offset
-        HashBytes::STATIC_SIZE,   // partition_hash
-        u32::STATIC_SIZE,         // num_raw_data
-        u64::STATIC_SIZE,         // raw_data_offset
-        u32::STATIC_SIZE,         // raw_data_size
-        u32::STATIC_SIZE,         // num_groups
-        u64::STATIC_SIZE,         // group_offset
-        u32::STATIC_SIZE,         // group_size
-        u8::STATIC_SIZE,          // compr_data_len
-        <[u8; 7]>::STATIC_SIZE,   // compr_data
-    ]);
-
-    fn from_reader_args<R>(reader: &mut R, _args: Self::Args<'_>) -> io::Result<Self>
-    where R: Read + ?Sized {
-        Ok(Self {
-            disc_type: <_>::from_reader(reader)?,
-            compression: <_>::from_reader(reader)?,
-            compression_level: <_>::from_reader(reader)?,
-            chunk_size: <_>::from_reader(reader)?,
-            disc_head: <_>::from_reader(reader)?,
-            num_partitions: <_>::from_reader(reader)?,
-            partition_type_size: <_>::from_reader(reader)?,
-            partition_offset: <_>::from_reader(reader)?,
-            partition_hash: <_>::from_reader(reader)?,
-            num_raw_data: <_>::from_reader(reader)?,
-            raw_data_offset: <_>::from_reader(reader)?,
-            raw_data_size: <_>::from_reader(reader)?,
-            num_groups: <_>::from_reader(reader)?,
-            group_offset: <_>::from_reader(reader)?,
-            group_size: <_>::from_reader(reader)?,
-            compr_data_len: <_>::from_reader(reader)?,
-            compr_data: <_>::from_reader(reader)?,
-        })
-    }
-}
-
-impl ToWriter for WIADisc {
-    fn to_writer<W>(&self, writer: &mut W) -> io::Result<()>
-    where W: Write + ?Sized {
-        self.disc_type.to_writer(writer)?;
-        self.compression.to_writer(writer)?;
-        self.compression_level.to_writer(writer)?;
-        self.chunk_size.to_writer(writer)?;
-        self.disc_head.to_writer(writer)?;
-        self.num_partitions.to_writer(writer)?;
-        self.partition_type_size.to_writer(writer)?;
-        self.partition_offset.to_writer(writer)?;
-        self.partition_hash.to_writer(writer)?;
-        self.num_raw_data.to_writer(writer)?;
-        self.raw_data_offset.to_writer(writer)?;
-        self.raw_data_size.to_writer(writer)?;
-        self.num_groups.to_writer(writer)?;
-        self.group_offset.to_writer(writer)?;
-        self.group_size.to_writer(writer)?;
-        self.compr_data_len.to_writer(writer)?;
-        self.compr_data.to_writer(writer)?;
+impl WIADisc {
+    pub fn validate(&self) -> Result<()> {
+        DiscType::try_from(self.disc_type.get())?;
+        Compression::try_from(self.compression.get())?;
+        if self.partition_type_size.get() != size_of::<WIAPartition>() as u32 {
+            return Err(Error::DiscFormat(format!(
+                "WIA partition type size is {}, expected {}",
+                self.partition_type_size.get(),
+                size_of::<WIAPartition>()
+            )));
+        }
         Ok(())
     }
 
-    fn write_size(&self) -> usize { Self::STATIC_SIZE }
+    pub fn compression(&self) -> Compression {
+        Compression::try_from(self.compression.get()).unwrap()
+    }
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct WIAPartitionData {
+#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[repr(C, align(4))]
+pub struct WIAPartitionData {
     /// The sector on the disc at which this data starts.
     /// One sector is 32 KiB (or 31 KiB excluding hashes).
-    pub(crate) first_sector: u32,
+    pub first_sector: U32,
     /// The number of sectors on the disc covered by this struct.
     /// One sector is 32 KiB (or 31 KiB excluding hashes).
-    pub(crate) num_sectors: u32,
+    pub num_sectors: U32,
     /// The index of the first [WIAGroup] struct that points to the data covered by this struct.
     /// The other [WIAGroup] indices follow sequentially.
-    pub(crate) group_index: u32,
+    pub group_index: U32,
     /// The number of [WIAGroup] structs used for this data.
-    pub(crate) num_groups: u32,
+    pub num_groups: U32,
 }
 
-impl FromReader for WIAPartitionData {
-    type Args<'a> = ();
-
-    const STATIC_SIZE: usize = struct_size([
-        u32::STATIC_SIZE, // first_sector
-        u32::STATIC_SIZE, // num_sectors
-        u32::STATIC_SIZE, // group_index
-        u32::STATIC_SIZE, // num_groups
-    ]);
-
-    fn from_reader_args<R>(reader: &mut R, _args: Self::Args<'_>) -> io::Result<Self>
-    where R: Read + ?Sized {
-        Ok(Self {
-            first_sector: <_>::from_reader(reader)?,
-            num_sectors: <_>::from_reader(reader)?,
-            group_index: <_>::from_reader(reader)?,
-            num_groups: <_>::from_reader(reader)?,
-        })
-    }
-}
-
-impl ToWriter for WIAPartitionData {
-    fn to_writer<W>(&self, writer: &mut W) -> io::Result<()>
-    where W: Write + ?Sized {
-        self.first_sector.to_writer(writer)?;
-        self.num_sectors.to_writer(writer)?;
-        self.group_index.to_writer(writer)?;
-        self.num_groups.to_writer(writer)?;
-        Ok(())
-    }
-
-    fn write_size(&self) -> usize { Self::STATIC_SIZE }
-}
+static_assert!(size_of::<WIAPartitionData>() == 0x10);
 
 /// This struct is used for keeping track of Wii partition data that on the actual disc is encrypted
 /// and hashed. This does not include the unencrypted area at the beginning of partitions that
@@ -455,50 +272,24 @@ impl ToWriter for WIAPartitionData {
 /// the reading program must first recalculate the hashes as done when creating a Wii disc image
 /// from scratch (see <https://wiibrew.org/wiki/Wii_Disc>), and must then apply the hash exceptions
 /// which are stored along with the data (see the [WIAExceptionList] section).
-#[derive(Clone, Debug)]
-pub(crate) struct WIAPartition {
+#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[repr(C, align(4))]
+pub struct WIAPartition {
     /// The title key for this partition (128-bit AES), which can be used for re-encrypting the
     /// partition data.
     ///
     /// This key can be used directly, without decrypting it using the Wii common key.
-    pub(crate) partition_key: KeyBytes,
+    pub partition_key: KeyBytes,
     /// To quote the wit source code: `segment 0 is small and defined for management data (boot ..
     /// fst). segment 1 takes the remaining data.`
     ///
     /// The point at which wit splits the two segments is the FST end offset rounded up to the next
     /// 2 MiB. Giving the first segment a size which is not a multiple of 2 MiB is likely a bad idea
     /// (unless the second segment has a size of 0).
-    pub(crate) partition_data: [WIAPartitionData; 2],
+    pub partition_data: [WIAPartitionData; 2],
 }
 
-impl FromReader for WIAPartition {
-    type Args<'a> = ();
-
-    const STATIC_SIZE: usize = struct_size([
-        KeyBytes::STATIC_SIZE,             // partition_key
-        WIAPartitionData::STATIC_SIZE * 2, // partition_data
-    ]);
-
-    fn from_reader_args<R>(reader: &mut R, _args: Self::Args<'_>) -> io::Result<Self>
-    where R: Read + ?Sized {
-        Ok(Self {
-            partition_key: <_>::from_reader(reader)?,
-            partition_data: [<_>::from_reader(reader)?, <_>::from_reader(reader)?],
-        })
-    }
-}
-
-impl ToWriter for WIAPartition {
-    fn to_writer<W>(&self, writer: &mut W) -> io::Result<()>
-    where W: Write + ?Sized {
-        self.partition_key.to_writer(writer)?;
-        self.partition_data[0].to_writer(writer)?;
-        self.partition_data[1].to_writer(writer)?;
-        Ok(())
-    }
-
-    fn write_size(&self) -> usize { Self::STATIC_SIZE }
-}
+static_assert!(size_of::<WIAPartition>() == 0x30);
 
 /// This struct is used for keeping track of disc data that is not stored as [WIAPartition].
 /// The data is stored as is (other than compression being applied).
@@ -508,51 +299,18 @@ impl ToWriter for WIAPartition {
 /// should be read from [WIADisc] instead.) This should be handled by rounding the offset down to
 /// the previous multiple of 0x8000 (and adding the equivalent amount to the size so that the end
 /// offset stays the same), not by special casing the first [WIARawData].
-#[derive(Clone, Debug)]
-pub(crate) struct WIARawData {
+#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[repr(C, align(4))]
+pub struct WIARawData {
     /// The offset on the disc at which this data starts.
-    pub(crate) raw_data_offset: u64,
+    pub raw_data_offset: U64,
     /// The number of bytes on the disc covered by this struct.
-    pub(crate) raw_data_size: u64,
+    pub raw_data_size: U64,
     /// The index of the first [WIAGroup] struct that points to the data covered by this struct.
     /// The other [WIAGroup] indices follow sequentially.
-    pub(crate) group_index: u32,
+    pub group_index: U32,
     /// The number of [WIAGroup] structs used for this data.
-    pub(crate) num_groups: u32,
-}
-
-impl FromReader for WIARawData {
-    type Args<'a> = ();
-
-    const STATIC_SIZE: usize = struct_size([
-        u64::STATIC_SIZE, // raw_data_offset
-        u64::STATIC_SIZE, // raw_data_size
-        u32::STATIC_SIZE, // group_index
-        u32::STATIC_SIZE, // num_groups
-    ]);
-
-    fn from_reader_args<R>(reader: &mut R, _args: Self::Args<'_>) -> io::Result<Self>
-    where R: Read + ?Sized {
-        Ok(Self {
-            raw_data_offset: <_>::from_reader(reader)?,
-            raw_data_size: <_>::from_reader(reader)?,
-            group_index: <_>::from_reader(reader)?,
-            num_groups: <_>::from_reader(reader)?,
-        })
-    }
-}
-
-impl ToWriter for WIARawData {
-    fn to_writer<W>(&self, writer: &mut W) -> io::Result<()>
-    where W: Write + ?Sized {
-        self.raw_data_offset.to_writer(writer)?;
-        self.raw_data_size.to_writer(writer)?;
-        self.group_index.to_writer(writer)?;
-        self.num_groups.to_writer(writer)?;
-        Ok(())
-    }
-
-    fn write_size(&self) -> usize { Self::STATIC_SIZE }
+    pub num_groups: U32,
 }
 
 /// This struct points directly to the actual disc data, stored compressed.
@@ -565,104 +323,49 @@ impl ToWriter for WIARawData {
 /// counting any [WIAExceptionList] structs. However, the last [WIAGroup] of a [WIAPartitionData]
 /// or [WIARawData] contains less data than that if `num_sectors * 0x8000` (for [WIAPartitionData])
 /// or `raw_data_size` (for [WIARawData]) is not evenly divisible by `chunk_size`.
-#[derive(Clone, Debug)]
-pub(crate) struct WIAGroup {
+#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[repr(C, align(4))]
+pub struct WIAGroup {
     /// The offset in the file where the compressed data is stored.
     ///
     /// Stored as a `u32`, divided by 4.
-    pub(crate) data_offset: u32,
+    pub data_offset: U32,
     /// The size of the compressed data, including any [WIAExceptionList] structs. 0 is a special
     /// case meaning that every byte of the decompressed data is 0x00 and the [WIAExceptionList]
     /// structs (if there are supposed to be any) contain 0 exceptions.
-    pub(crate) data_size: u32,
-}
-
-impl FromReader for WIAGroup {
-    type Args<'a> = ();
-
-    const STATIC_SIZE: usize = struct_size([
-        u32::STATIC_SIZE, // data_offset
-        u32::STATIC_SIZE, // data_size
-    ]);
-
-    fn from_reader_args<R>(reader: &mut R, _args: Self::Args<'_>) -> io::Result<Self>
-    where R: Read + ?Sized {
-        Ok(Self { data_offset: <_>::from_reader(reader)?, data_size: <_>::from_reader(reader)? })
-    }
-}
-
-impl ToWriter for WIAGroup {
-    fn to_writer<W>(&self, writer: &mut W) -> io::Result<()>
-    where W: Write + ?Sized {
-        self.data_offset.to_writer(writer)?;
-        self.data_size.to_writer(writer)?;
-        Ok(())
-    }
-
-    fn write_size(&self) -> usize { Self::STATIC_SIZE }
+    pub data_size: U32,
 }
 
 /// Compared to [WIAGroup], [RVZGroup] changes the meaning of the most significant bit of
 /// [data_size](Self::data_size) and adds one additional attribute.
-#[derive(Clone, Debug)]
-pub(crate) struct RVZGroup {
+#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[repr(C, align(4))]
+pub struct RVZGroup {
     /// The offset in the file where the compressed data is stored, divided by 4.
-    pub(crate) data_offset: u32,
+    pub data_offset: U32,
     /// The most significant bit is 1 if the data is compressed using the compression method
     /// indicated in [WIADisc], and 0 if it is not compressed. The lower 31 bits are the size of
     /// the compressed data, including any [WIAExceptionList] structs. The lower 31 bits being 0 is
     /// a special case meaning that every byte of the decompressed and unpacked data is 0x00 and
     /// the [WIAExceptionList] structs (if there are supposed to be any) contain 0 exceptions.
-    pub(crate) data_size: u32,
+    pub data_size_and_flag: U32,
     /// The size after decompressing but before decoding the RVZ packing.
     /// If this is 0, RVZ packing is not used for this group.
-    pub(crate) rvz_packed_size: u32,
-    /// Extracted from the most significant bit of [data_size](Self::data_size).
-    pub(crate) is_compressed: bool,
+    pub rvz_packed_size: U32,
 }
 
-impl FromReader for RVZGroup {
-    type Args<'a> = ();
+impl RVZGroup {
+    pub fn data_size(&self) -> u32 { self.data_size_and_flag.get() & 0x7FFFFFFF }
 
-    const STATIC_SIZE: usize = struct_size([
-        u32::STATIC_SIZE, // data_offset
-        u32::STATIC_SIZE, // data_size
-        u32::STATIC_SIZE, // rvz_packed_size
-    ]);
-
-    fn from_reader_args<R>(reader: &mut R, _args: Self::Args<'_>) -> io::Result<Self>
-    where R: Read + ?Sized {
-        let data_offset = u32::from_reader(reader)?;
-        let size_and_flag = u32::from_reader(reader)?;
-        let rvz_packed_size = u32::from_reader(reader)?;
-        Ok(Self {
-            data_offset,
-            data_size: size_and_flag & 0x7FFFFFFF,
-            rvz_packed_size,
-            is_compressed: size_and_flag & 0x80000000 != 0,
-        })
-    }
-}
-
-impl ToWriter for RVZGroup {
-    fn to_writer<W>(&self, writer: &mut W) -> io::Result<()>
-    where W: Write + ?Sized {
-        self.data_offset.to_writer(writer)?;
-        (self.data_size | (self.is_compressed as u32) << 31).to_writer(writer)?;
-        self.rvz_packed_size.to_writer(writer)?;
-        Ok(())
-    }
-
-    fn write_size(&self) -> usize { Self::STATIC_SIZE }
+    pub fn is_compressed(&self) -> bool { self.data_size_and_flag.get() & 0x80000000 != 0 }
 }
 
 impl From<WIAGroup> for RVZGroup {
     fn from(value: WIAGroup) -> Self {
         Self {
             data_offset: value.data_offset,
-            data_size: value.data_size,
-            rvz_packed_size: 0,
-            is_compressed: true,
+            data_size_and_flag: U32::new(value.data_size.get() | 0x80000000),
+            rvz_packed_size: U32::new(0),
         }
     }
 }
@@ -682,45 +385,21 @@ impl From<WIAGroup> for RVZGroup {
 /// write [WIAException] structs for a padding area which is 32 bytes long, it writes one which
 /// covers the first 20 bytes of the padding area and one which covers the last 20 bytes of the
 /// padding area, generating 12 bytes of overlap between the [WIAException] structs.
-#[derive(Clone, Debug)]
-pub(crate) struct WIAException {
+#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[repr(C, align(2))]
+pub struct WIAException {
     /// The offset among the hashes. The offsets 0x0000-0x0400 here map to the offsets 0x0000-0x0400
     /// in the full 2 MiB of data, the offsets 0x0400-0x0800 here map to the offsets 0x8000-0x8400
     /// in the full 2 MiB of data, and so on.
     ///
     /// The offsets start over at 0 for each new [WIAExceptionList].
-    pub(crate) offset: u16,
+    pub offset: U16,
     /// The hash that the automatically generated hash at the given offset needs to be replaced
     /// with.
     ///
     /// The replacement should happen after calculating all hashes for the current 2 MiB of data
     /// but before encrypting the hashes.
-    pub(crate) hash: HashBytes,
-}
-
-impl FromReader for WIAException {
-    type Args<'a> = ();
-
-    const STATIC_SIZE: usize = struct_size([
-        u16::STATIC_SIZE,       // offset
-        HashBytes::STATIC_SIZE, // hash
-    ]);
-
-    fn from_reader_args<R>(reader: &mut R, _args: Self::Args<'_>) -> io::Result<Self>
-    where R: Read + ?Sized {
-        Ok(Self { offset: <_>::from_reader(reader)?, hash: <_>::from_reader(reader)? })
-    }
-}
-
-impl ToWriter for WIAException {
-    fn to_writer<W>(&self, writer: &mut W) -> io::Result<()>
-    where W: Write + ?Sized {
-        self.offset.to_writer(writer)?;
-        self.hash.to_writer(writer)?;
-        Ok(())
-    }
-
-    fn write_size(&self) -> usize { Self::STATIC_SIZE }
+    pub hash: HashBytes,
 }
 
 /// Each [WIAGroup] of Wii partition data contains one or more [WIAExceptionList] structs before
@@ -749,118 +428,49 @@ impl ToWriter for WIAException {
 /// end offset of the last [WIAExceptionList] is not evenly divisible by 4, padding is inserted
 /// after it so that the data afterwards will start at a 4 byte boundary. This padding is not
 /// inserted for the other compression methods.
-#[derive(Clone, Debug)]
-pub(crate) struct WIAExceptionList {
-    /// Each [WIAException] describes one difference between the hashes obtained by hashing the
-    /// partition data and the original hashes.
-    pub(crate) exceptions: Vec<WIAException>,
-}
+type WIAExceptionList = Vec<WIAException>;
 
-impl FromReader for WIAExceptionList {
-    type Args<'a> = ();
-
-    const STATIC_SIZE: usize = DYNAMIC_SIZE;
-
-    fn from_reader_args<R>(reader: &mut R, _args: Self::Args<'_>) -> io::Result<Self>
-    where R: Read + ?Sized {
-        let num_exceptions = u16::from_reader(reader)?;
-        let exceptions = read_vec(reader, num_exceptions as usize)?;
-        Ok(Self { exceptions })
-    }
-}
-
-impl ToWriter for WIAExceptionList {
-    fn to_writer<W>(&self, writer: &mut W) -> io::Result<()>
-    where W: Write + ?Sized {
-        (self.exceptions.len() as u16).to_writer(writer)?;
-        write_vec(writer, &self.exceptions)?;
-        Ok(())
-    }
-
-    fn write_size(&self) -> usize {
-        u16::STATIC_SIZE + self.exceptions.len() * WIAException::STATIC_SIZE
-    }
-}
-
-/// This struct is used by the simple compression method [Purge](Compression::Purge), which stores
-/// runs of zeroes efficiently and stores other data as is.
-///
-/// Each [Purge](Compression::Purge) chunk contains zero or more [WIASegment] structs stored in
-/// order of ascending offset, followed by a SHA-1 hash (0x14 bytes) of the [WIAExceptionList]
-/// structs (if any) and the [WIASegment] structs. Bytes in the decompressed data that are not
-/// covered by any [WIASegment] struct are set to 0x00.
-#[derive(Clone, Debug)]
-pub(crate) struct WIASegment {
-    /// The offset of data within the decompressed data.
-    ///
-    /// Any [WIAExceptionList] structs are not counted as part of the decompressed data.
-    pub(crate) offset: u32,
-    /// The data.
-    pub(crate) data: Vec<u8>,
-}
-
-impl FromReader for WIASegment {
-    type Args<'a> = ();
-
-    const STATIC_SIZE: usize = DYNAMIC_SIZE;
-
-    fn from_reader_args<R>(reader: &mut R, _args: Self::Args<'_>) -> io::Result<Self>
-    where R: Read + ?Sized {
-        let offset = u32::from_reader(reader)?;
-        let size = u32::from_reader(reader)?;
-        let data = read_bytes(reader, size as usize)?;
-        Ok(Self { offset, data })
-    }
-}
-
-impl ToWriter for WIASegment {
-    fn to_writer<W>(&self, writer: &mut W) -> io::Result<()>
-    where W: Write + ?Sized {
-        self.offset.to_writer(writer)?;
-        (self.data.len() as u32).to_writer(writer)?;
-        self.data.to_writer(writer)?;
-        Ok(())
-    }
-
-    fn write_size(&self) -> usize { u32::STATIC_SIZE * 2 + self.data.len() }
-}
-
-pub(crate) enum Decompressor {
+pub enum Decompressor {
     None,
-    // Purge,
     #[cfg(feature = "compress-bzip2")]
     Bzip2,
-    // Lzma,
-    // Lzma2,
+    #[cfg(feature = "compress-lzma")]
+    Lzma(liblzma::stream::LzmaOptions),
+    #[cfg(feature = "compress-lzma")]
+    Lzma2(liblzma::stream::LzmaOptions),
     #[cfg(feature = "compress-zstd")]
     Zstandard,
 }
 
 impl Decompressor {
-    pub(crate) fn new(disc: &WIADisc) -> Result<Self> {
-        match disc.compression {
+    pub fn new(disc: &WIADisc) -> Result<Self> {
+        let compr_data = &disc.compr_data[..disc.compr_data_len as usize];
+        match disc.compression() {
             Compression::None => Ok(Self::None),
-            // Compression::Purge => Ok(Self::Purge),
             #[cfg(feature = "compress-bzip2")]
             Compression::Bzip2 => Ok(Self::Bzip2),
-            // Compression::Lzma => Ok(Self::Lzma),
-            // Compression::Lzma2 => Ok(Self::Lzma2),
+            #[cfg(feature = "compress-lzma")]
+            Compression::Lzma => Ok(Self::Lzma(lzma_props_decode(compr_data)?)),
+            #[cfg(feature = "compress-lzma")]
+            Compression::Lzma2 => Ok(Self::Lzma2(lzma2_props_decode(compr_data)?)),
             #[cfg(feature = "compress-zstd")]
             Compression::Zstandard => Ok(Self::Zstandard),
             comp => Err(Error::DiscFormat(format!("Unsupported WIA/RVZ compression: {:?}", comp))),
         }
     }
 
-    pub(crate) fn wrap<'a, R>(&mut self, reader: R) -> Result<Box<dyn Read + 'a>>
+    pub fn wrap<'a, R>(&mut self, reader: R) -> io::Result<Box<dyn Read + 'a>>
     where R: Read + 'a {
         Ok(match self {
             Decompressor::None => Box::new(reader),
             #[cfg(feature = "compress-bzip2")]
             Decompressor::Bzip2 => Box::new(bzip2::read::BzDecoder::new(reader)),
+            #[cfg(feature = "compress-lzma")]
+            Decompressor::Lzma(options) => Box::new(new_lzma_decoder(reader, options)?),
+            #[cfg(feature = "compress-lzma")]
+            Decompressor::Lzma2(options) => Box::new(new_lzma2_decoder(reader, options)?),
             #[cfg(feature = "compress-zstd")]
-            Decompressor::Zstandard => {
-                Box::new(zstd::stream::Decoder::new(reader).context("Creating zstd decoder")?)
-            }
+            Decompressor::Zstandard => Box::new(zstd::stream::Decoder::new(reader)?),
         })
     }
 }
@@ -873,62 +483,52 @@ impl Decompressor {
 /// yielding 8 H2 hashes.
 /// Finally, the 8 H2 hashes for each group are hashed, yielding 1 H3 hash.
 /// The H3 hashes for each group are stored in the partition's H3 table.
-pub(crate) struct HashTable {
+pub struct HashTable {
     /// SHA-1 hash of the 31 H0 hashes for each sector.
-    pub(crate) h1_hashes: Vec<HashBytes>,
+    pub h1_hashes: Vec<HashBytes>,
     /// SHA-1 hash of the 8 H1 hashes for each subgroup.
-    pub(crate) h2_hashes: Vec<HashBytes>,
+    pub h2_hashes: Vec<HashBytes>,
     /// SHA-1 hash of the 8 H2 hashes for each group.
-    pub(crate) h3_hashes: Vec<HashBytes>,
+    pub h3_hashes: Vec<HashBytes>,
 }
 
-pub(crate) struct DiscIOWIA {
-    pub(crate) header: WIAFileHeader,
-    pub(crate) disc: WIADisc,
-    pub(crate) partitions: Vec<WIAPartition>,
-    pub(crate) raw_data: Vec<WIARawData>,
-    pub(crate) groups: Vec<RVZGroup>,
-    pub(crate) filename: PathBuf,
-    pub(crate) encrypt: bool,
-    pub(crate) hash_tables: Vec<HashTable>,
+struct HashResult {
+    h1_hashes: [HashBytes; 64],
+    h2_hashes: [HashBytes; 8],
+    h3_hash: HashBytes,
 }
 
-/// Wraps a buffer, reading zeros for any extra bytes.
-struct SizedRead<'a> {
-    buf: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> SizedRead<'a> {
-    fn new(buf: &'a [u8]) -> Self { Self { buf, pos: 0 } }
-}
-
-impl Read for SizedRead<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let written = if self.pos < self.buf.len() {
-            let to_read = min(buf.len(), self.buf.len() - self.pos);
-            buf[..to_read].copy_from_slice(&self.buf[self.pos..self.pos + to_read]);
-            to_read
-        } else {
-            0
-        };
-        buf[written..].fill(0);
-        self.pos += buf.len();
-        Ok(buf.len())
-    }
-}
-
-impl Seek for SizedRead<'_> {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        match pos {
-            SeekFrom::Start(pos) => self.pos = pos as usize,
-            SeekFrom::Current(pos) => self.pos = (self.pos as i64 + pos) as usize,
-            SeekFrom::End(_) => unimplemented!(),
+impl HashTable {
+    fn new(num_sectors: u32) -> Self {
+        let num_sectors = num_sectors.next_multiple_of(64) as usize;
+        let num_subgroups = num_sectors / 8;
+        let num_groups = num_subgroups / 8;
+        Self {
+            h1_hashes: HashBytes::new_vec_zeroed(num_sectors),
+            h2_hashes: HashBytes::new_vec_zeroed(num_subgroups),
+            h3_hashes: HashBytes::new_vec_zeroed(num_groups),
         }
-        Ok(self.pos as u64)
     }
 
-    fn stream_position(&mut self) -> io::Result<u64> { Ok(self.pos as u64) }
+    fn extend(&mut self, group_index: usize, result: &HashResult) {
+        let h1_start = group_index * 64;
+        self.h1_hashes[h1_start..h1_start + 64].copy_from_slice(&result.h1_hashes);
+        let h2_start = group_index * 8;
+        self.h2_hashes[h2_start..h2_start + 8].copy_from_slice(&result.h2_hashes);
+        self.h3_hashes[group_index] = result.h3_hash;
+    }
+}
+
+pub struct DiscIOWIA {
+    pub header: WIAFileHeader,
+    pub disc: WIADisc,
+    pub partitions: Vec<WIAPartition>,
+    pub raw_data: Vec<WIARawData>,
+    pub groups: Vec<RVZGroup>,
+    pub filename: PathBuf,
+    pub encrypt: bool,
+    pub hash_tables: Vec<HashTable>,
+    pub nkit_header: Option<NKitHeader>,
 }
 
 #[derive(Debug)]
@@ -959,9 +559,9 @@ fn verify_hash(buf: &[u8], expected: &HashBytes) -> Result<()> {
     let out = hash_bytes(buf);
     if out != *expected {
         let mut got_bytes = [0u8; 40];
-        let got = base16ct::lower::encode_str(&out, &mut got_bytes)?;
+        let got = base16ct::lower::encode_str(&out, &mut got_bytes).unwrap(); // Safe: fixed buffer size
         let mut expected_bytes = [0u8; 40];
-        let expected = base16ct::lower::encode_str(expected, &mut expected_bytes)?;
+        let expected = base16ct::lower::encode_str(expected, &mut expected_bytes).unwrap(); // Safe: fixed buffer size
         return Err(Error::DiscFormat(format!(
             "WIA hash mismatch: {}, expected {}",
             got, expected
@@ -971,97 +571,74 @@ fn verify_hash(buf: &[u8], expected: &HashBytes) -> Result<()> {
 }
 
 impl DiscIOWIA {
-    pub(crate) fn new(filename: &Path, options: &DiscIOOptions) -> Result<Self> {
+    pub fn new(filename: &Path, options: &OpenOptions) -> Result<Self> {
         let mut file = BufReader::new(
             File::open(filename).with_context(|| format!("Opening file {}", filename.display()))?,
         );
 
         // Load & verify file header
-        let header_buf = <[u8; WIAFileHeader::STATIC_SIZE]>::from_reader(&mut file)
-            .context("Reading WIA/RVZ file header")?;
-        let header = WIAFileHeader::from_reader(&mut header_buf.as_slice())
-            .context("Parsing WIA/RVZ file header")?;
-        verify_hash(
-            &header_buf[..WIAFileHeader::STATIC_SIZE - HashBytes::STATIC_SIZE],
-            &header.file_head_hash,
-        )?;
-        if header.version_compatible < 0x30000 {
-            return Err(Error::DiscFormat(format!(
-                "WIA/RVZ version {:#X} is not supported",
-                header.version_compatible
-            )));
-        }
-        let is_rvz = header.magic == WIARVZMagic::Rvz;
-        // println!("Header: {:?}", header);
+        let header: WIAFileHeader = read_from(&mut file).context("Reading WIA/RVZ file header")?;
+        header.validate()?;
+        let is_rvz = header.is_rvz();
+        // log::debug!("Header: {:?}", header);
 
         // Load & verify disc header
-        let disc_buf = read_bytes(&mut file, header.disc_size as usize)
+        let mut disc_buf: Vec<u8> = read_vec(&mut file, header.disc_size.get() as usize)
             .context("Reading WIA/RVZ disc header")?;
         verify_hash(&disc_buf, &header.disc_hash)?;
-        let disc = WIADisc::from_reader(&mut SizedRead::new(&disc_buf))
-            .context("Parsing WIA/RVZ disc header")?;
-        // println!("Disc: {:?}", disc);
-        if disc.partition_type_size != WIAPartition::STATIC_SIZE as u32 {
-            return Err(Error::DiscFormat(format!(
-                "WIA partition type size is {}, expected {}",
-                disc.partition_type_size,
-                WIAPartition::STATIC_SIZE
-            )));
+        disc_buf.resize(size_of::<WIADisc>(), 0);
+        let mut disc = WIADisc::read_from(disc_buf.as_slice()).unwrap();
+        disc.validate()?;
+        if !options.rebuild_encryption {
+            // If we're not re-encrypting, disable partition encryption in disc header
+            disc.disc_head[0x61] = 1;
         }
+        // log::debug!("Disc: {:?}", disc);
+
+        // Read NKit header if present (after disc header)
+        let nkit_header = NKitHeader::try_read_from(&mut file);
 
         // Load & verify partition headers
-        file.seek(SeekFrom::Start(disc.partition_offset))
+        file.seek(SeekFrom::Start(disc.partition_offset.get()))
             .context("Seeking to WIA/RVZ partition headers")?;
-        let partition_buf =
-            read_bytes(&mut file, disc.partition_type_size as usize * disc.num_partitions as usize)
-                .context("Reading WIA/RVZ partition headers")?;
-        verify_hash(&partition_buf, &disc.partition_hash)?;
-        let partitions = read_vec(&mut partition_buf.as_slice(), disc.num_partitions as usize)
-            .context("Parsing WIA/RVZ partition headers")?;
-        // println!("Partitions: {:?}", partitions);
+        let partitions: Vec<WIAPartition> = read_vec(&mut file, disc.num_partitions.get() as usize)
+            .context("Reading WIA/RVZ partition headers")?;
+        verify_hash(partitions.as_slice().as_bytes(), &disc.partition_hash)?;
+        // log::debug!("Partitions: {:?}", partitions);
 
         // Create decompressor
         let mut decompressor = Decompressor::new(&disc)?;
 
         // Load raw data headers
-        let raw_data = {
-            file.seek(SeekFrom::Start(disc.raw_data_offset))
+        let raw_data: Vec<WIARawData> = {
+            file.seek(SeekFrom::Start(disc.raw_data_offset.get()))
                 .context("Seeking to WIA/RVZ raw data headers")?;
-            let mut reader = decompressor.wrap((&mut file).take(disc.raw_data_size as u64))?;
-            read_vec(&mut reader, disc.num_raw_data as usize)
+            let mut reader = decompressor
+                .wrap((&mut file).take(disc.raw_data_size.get() as u64))
+                .context("Creating WIA/RVZ decompressor")?;
+            read_vec(&mut reader, disc.num_raw_data.get() as usize)
                 .context("Reading WIA/RVZ raw data headers")?
-            // println!("Raw data: {:?}", raw_data);
         };
+        // log::debug!("Raw data: {:?}", raw_data);
 
         // Load group headers
-        let mut groups = Vec::with_capacity(disc.num_groups as usize);
-        {
-            file.seek(SeekFrom::Start(disc.group_offset))
+        let groups = {
+            file.seek(SeekFrom::Start(disc.group_offset.get()))
                 .context("Seeking to WIA/RVZ group headers")?;
-            let mut reader = decompressor.wrap((&mut file).take(disc.group_size as u64))?;
-            let bytes = read_bytes(
-                &mut reader,
-                disc.num_groups as usize
-                    * if is_rvz { RVZGroup::STATIC_SIZE } else { WIAGroup::STATIC_SIZE },
-            )
-            .context("Reading WIA/RVZ group headers")?;
-            let mut slice = bytes.as_slice();
-            for i in 0..disc.num_groups {
-                if is_rvz {
-                    groups.push(
-                        RVZGroup::from_reader(&mut slice)
-                            .with_context(|| format!("Parsing RVZ group header {}", i))?,
-                    );
-                } else {
-                    groups.push(
-                        WIAGroup::from_reader(&mut slice)
-                            .with_context(|| format!("Parsing WIA group header {}", i))?
-                            .into(),
-                    );
-                }
+            let mut reader = decompressor
+                .wrap((&mut file).take(disc.group_size.get() as u64))
+                .context("Creating WIA/RVZ decompressor")?;
+            if is_rvz {
+                read_vec(&mut reader, disc.num_groups.get() as usize)
+                    .context("Reading WIA/RVZ group headers")?
+            } else {
+                let wia_groups: Vec<WIAGroup> =
+                    read_vec(&mut reader, disc.num_groups.get() as usize)
+                        .context("Reading WIA/RVZ group headers")?;
+                wia_groups.into_iter().map(RVZGroup::from).collect()
             }
-            // println!("Groups: {:?}", groups);
-        }
+            // log::debug!("Groups: {:?}", groups);
+        };
 
         let mut disc_io = Self {
             header,
@@ -1070,8 +647,9 @@ impl DiscIOWIA {
             raw_data,
             groups,
             filename: filename.to_owned(),
-            encrypt: options.rebuild_hashes,
+            encrypt: options.rebuild_encryption,
             hash_tables: vec![],
+            nkit_header,
         };
         if options.rebuild_hashes {
             disc_io.rebuild_hashes()?;
@@ -1084,60 +662,68 @@ impl DiscIOWIA {
             p.partition_data
                 .iter()
                 .find(|pd| {
-                    let start = pd.first_sector as u64 * SECTOR_SIZE as u64;
-                    let end = start + pd.num_sectors as u64 * SECTOR_SIZE as u64;
+                    let start = pd.first_sector.get() as u64 * SECTOR_SIZE as u64;
+                    let end = start + pd.num_sectors.get() as u64 * SECTOR_SIZE as u64;
                     offset >= start && offset < end
                 })
                 .map(|pd| (p_idx, pd))
         }) {
-            let start = pd.first_sector as u64 * SECTOR_SIZE as u64;
-            let group_index = (offset - start) / self.disc.chunk_size as u64;
-            if group_index >= pd.num_groups as u64 {
+            let start = pd.first_sector.get() as u64 * SECTOR_SIZE as u64;
+            let group_index = (offset - start) / self.disc.chunk_size.get() as u64;
+            if group_index >= pd.num_groups.get() as u64 {
                 return None;
             }
-            let disc_offset = start + group_index * self.disc.chunk_size as u64;
-            let chunk_size = (self.disc.chunk_size as u64 * BLOCK_SIZE as u64) / SECTOR_SIZE as u64;
+            let disc_offset = start + group_index * self.disc.chunk_size.get() as u64;
+            let chunk_size =
+                (self.disc.chunk_size.get() as u64 * BLOCK_SIZE as u64) / SECTOR_SIZE as u64;
             let partition_offset = group_index * chunk_size;
-            let partition_end = pd.num_sectors as u64 * BLOCK_SIZE as u64;
-            self.groups.get(pd.group_index as usize + group_index as usize).map(|g| GroupResult {
-                disc_offset,
-                partition_offset,
-                group: g.clone(),
-                partition_index: Some(p_idx),
-                chunk_size: chunk_size as u32,
-                partition_end,
+            let partition_end = pd.num_sectors.get() as u64 * BLOCK_SIZE as u64;
+            self.groups.get(pd.group_index.get() as usize + group_index as usize).map(|g| {
+                GroupResult {
+                    disc_offset,
+                    partition_offset,
+                    group: g.clone(),
+                    partition_index: Some(p_idx),
+                    chunk_size: chunk_size as u32,
+                    partition_end,
+                }
             })
         } else if let Some(d) = self.raw_data.iter().find(|d| {
-            let start = d.raw_data_offset & !0x7FFF;
-            let end = d.raw_data_offset + d.raw_data_size;
+            let start = d.raw_data_offset.get() & !0x7FFF;
+            let end = d.raw_data_offset.get() + d.raw_data_size.get();
             offset >= start && offset < end
         }) {
-            let start = d.raw_data_offset & !0x7FFF;
-            let end = d.raw_data_offset + d.raw_data_size;
-            let group_index = (offset - start) / self.disc.chunk_size as u64;
-            if group_index >= d.num_groups as u64 {
+            let start = d.raw_data_offset.get() & !0x7FFF;
+            let end = d.raw_data_offset.get() + d.raw_data_size.get();
+            let group_index = (offset - start) / self.disc.chunk_size.get() as u64;
+            if group_index >= d.num_groups.get() as u64 {
                 return None;
             }
-            let disc_offset = start + group_index * self.disc.chunk_size as u64;
-            self.groups.get(d.group_index as usize + group_index as usize).map(|g| GroupResult {
-                disc_offset,
-                partition_offset: disc_offset,
-                group: g.clone(),
-                partition_index: None,
-                chunk_size: self.disc.chunk_size,
-                partition_end: end,
+            let disc_offset = start + group_index * self.disc.chunk_size.get() as u64;
+            self.groups.get(d.group_index.get() as usize + group_index as usize).map(|g| {
+                GroupResult {
+                    disc_offset,
+                    partition_offset: disc_offset,
+                    group: g.clone(),
+                    partition_index: None,
+                    chunk_size: self.disc.chunk_size.get(),
+                    partition_end: end,
+                }
             })
         } else {
             None
         }
     }
 
-    pub(crate) fn rebuild_hashes(&mut self) -> Result<()> {
+    pub fn rebuild_hashes(&mut self) -> Result<()> {
         const NUM_H0_HASHES: usize = BLOCK_SIZE / HASHES_SIZE;
-        const H0_HASHES_SIZE: usize = HashBytes::STATIC_SIZE * NUM_H0_HASHES;
+        const H0_HASHES_SIZE: usize = size_of::<HashBytes>() * NUM_H0_HASHES;
+
+        let start = Instant::now();
 
         // Precompute hashes for zeroed sectors.
-        let zero_h0_hash = hash_bytes(&[0u8; HASHES_SIZE]);
+        const ZERO_H0_BYTES: &[u8] = &[0u8; HASHES_SIZE];
+        let zero_h0_hash = hash_bytes(ZERO_H0_BYTES);
         let mut zero_h1_hash = Sha1::new();
         for _ in 0..NUM_H0_HASHES {
             zero_h1_hash.update(zero_h0_hash);
@@ -1145,80 +731,100 @@ impl DiscIOWIA {
         let zero_h1_hash: HashBytes = zero_h1_hash.finalize().into();
 
         let mut hash_tables = Vec::with_capacity(self.partitions.len());
-        let mut stream =
-            WIAReadStream::new(self, 0, false).context("Creating WIA/RVZ read stream")?;
         for part in &self.partitions {
-            let first_sector = part.partition_data[0].first_sector;
-            if first_sector + part.partition_data[0].num_sectors
-                != part.partition_data[1].first_sector
+            let first_sector = part.partition_data[0].first_sector.get();
+            if first_sector + part.partition_data[0].num_sectors.get()
+                != part.partition_data[1].first_sector.get()
             {
                 return Err(Error::DiscFormat(format!(
                     "Partition data is not contiguous: {}..{} != {}",
                     first_sector,
-                    first_sector + part.partition_data[0].num_sectors,
-                    part.partition_data[1].first_sector
+                    first_sector + part.partition_data[0].num_sectors.get(),
+                    part.partition_data[1].first_sector.get()
                 )));
             }
-            let part_sectors =
-                part.partition_data[0].num_sectors + part.partition_data[1].num_sectors;
 
-            let num_sectors = part_sectors.next_multiple_of(64) as usize;
-            let num_subgroups = num_sectors / 8;
-            let num_groups = num_subgroups / 8;
-            println!(
+            let part_sectors =
+                part.partition_data[0].num_sectors.get() + part.partition_data[1].num_sectors.get();
+            let hash_table = HashTable::new(part_sectors);
+            log::debug!(
                 "Rebuilding hashes: {} sectors, {} subgroups, {} groups",
-                num_sectors, num_subgroups, num_groups
+                hash_table.h1_hashes.len(),
+                hash_table.h2_hashes.len(),
+                hash_table.h3_hashes.len()
             );
 
-            let mut hash_table = HashTable {
-                h1_hashes: vec![HashBytes::default(); num_sectors],
-                h2_hashes: vec![HashBytes::default(); num_subgroups],
-                h3_hashes: vec![HashBytes::default(); num_groups],
-            };
-            let mut h0_buf = [0u8; H0_HASHES_SIZE];
-            for h3_index in 0..num_groups {
-                let mut h3_hasher = Sha1::new();
-                for h2_index in h3_index * 8..h3_index * 8 + 8 {
-                    let mut h2_hasher = Sha1::new();
-                    for h1_index in h2_index * 8..h2_index * 8 + 8 {
-                        let h1_hash = if h1_index >= part_sectors as usize {
-                            zero_h1_hash
-                        } else {
-                            let sector = first_sector + h1_index as u32;
-                            stream
-                                .seek(SeekFrom::Start(sector as u64 * SECTOR_SIZE as u64))
-                                .with_context(|| format!("Seeking to sector {}", sector))?;
-                            stream
-                                .read_exact(&mut h0_buf)
-                                .with_context(|| format!("Reading sector {}", sector))?;
-                            hash_bytes(&h0_buf)
-                        };
-                        hash_table.h1_hashes[h1_index] = h1_hash;
-                        h2_hasher.update(h1_hash);
+            let group_count = hash_table.h3_hashes.len();
+            let mutex = Arc::new(Mutex::new(hash_table));
+            (0..group_count).into_par_iter().try_for_each_init(
+                || (WIAReadStream::new(self, false), mutex.clone()),
+                |(stream, mutex), h3_index| -> Result<()> {
+                    let stream = stream.as_mut().map_err(|_| {
+                        Error::DiscFormat("Failed to create read stream".to_string())
+                    })?;
+                    let mut result = HashResult {
+                        h1_hashes: [HashBytes::default(); 64],
+                        h2_hashes: [HashBytes::default(); 8],
+                        h3_hash: HashBytes::default(),
+                    };
+                    let mut h0_buf = [0u8; H0_HASHES_SIZE];
+                    let mut h3_hasher = Sha1::new();
+                    for h2_index in 0..8 {
+                        let mut h2_hasher = Sha1::new();
+                        for h1_index in 0..8 {
+                            let part_sector =
+                                h1_index as u32 + h2_index as u32 * 8 + h3_index as u32 * 64;
+                            let h1_hash = if part_sector >= part_sectors {
+                                zero_h1_hash
+                            } else {
+                                let sector = first_sector + part_sector;
+                                stream
+                                    .seek(SeekFrom::Start(sector as u64 * SECTOR_SIZE as u64))
+                                    .with_context(|| format!("Seeking to sector {}", sector))?;
+                                stream
+                                    .read_exact(&mut h0_buf)
+                                    .with_context(|| format!("Reading sector {}", sector))?;
+                                hash_bytes(&h0_buf)
+                            };
+                            result.h1_hashes[h1_index + h2_index * 8] = h1_hash;
+                            h2_hasher.update(h1_hash);
+                        }
+                        let h2_hash = h2_hasher.finalize().into();
+                        result.h2_hashes[h2_index] = h2_hash;
+                        h3_hasher.update(h2_hash);
                     }
-                    let h2_hash = h2_hasher.finalize().into();
-                    hash_table.h2_hashes[h2_index] = h2_hash;
-                    h3_hasher.update(h2_hash);
-                }
-                hash_table.h3_hashes[h3_index] = h3_hasher.finalize().into();
-            }
+                    result.h3_hash = h3_hasher.finalize().into();
+                    let mut hash_table = mutex.lock().map_err(|_| "Failed to lock mutex")?;
+                    hash_table.extend(h3_index, &result);
+                    Ok(())
+                },
+            )?;
 
+            let hash_table = Arc::try_unwrap(mutex)
+                .map_err(|_| "Failed to unwrap Arc")?
+                .into_inner()
+                .map_err(|_| "Failed to lock mutex")?;
             hash_tables.push(hash_table);
         }
         self.hash_tables = hash_tables;
+        log::info!("Rebuilt hashes in {:?}", start.elapsed());
         Ok(())
     }
 }
 
 impl DiscIO for DiscIOWIA {
-    fn begin_read_stream(&mut self, offset: u64) -> io::Result<Box<dyn ReadStream + '_>> {
-        Ok(Box::new(WIAReadStream::new(self, offset, self.encrypt)?))
+    fn open(&self) -> Result<Box<dyn ReadStream + '_>> {
+        Ok(Box::new(WIAReadStream::new(self, self.encrypt)?))
     }
 
-    fn has_wii_crypto(&self) -> bool { self.encrypt && self.disc.disc_type == DiscType::Wii }
+    fn meta(&self) -> Result<DiscMeta> {
+        Ok(self.nkit_header.as_ref().map(DiscMeta::from).unwrap_or_default())
+    }
+
+    fn disc_size(&self) -> Option<u64> { Some(self.header.iso_file_size.get()) }
 }
 
-pub(crate) struct WIAReadStream<'a> {
+pub struct WIAReadStream<'a> {
     /// The disc IO.
     disc_io: &'a DiscIOWIA,
     /// The currently open file handle.
@@ -1250,36 +856,36 @@ where
     }
 
     let num_exception_list = (chunk_size as usize).div_ceil(0x200000);
-    // println!("Num exception list: {:?}", num_exception_list);
-    let exception_lists = read_vec::<WIAExceptionList, _>(reader, num_exception_list)?;
-    for list in &exception_lists {
-        if !list.exceptions.is_empty() {
-            println!("Exception list: {:?}", list);
+    // log::debug!("Num exception list: {:?}", num_exception_list);
+    let mut exception_lists = Vec::with_capacity(num_exception_list);
+    for i in 0..num_exception_list {
+        let num_exceptions = read_u16_be(reader)?;
+        let exceptions: Vec<WIAException> = read_vec(reader, num_exceptions as usize)?;
+        if !exceptions.is_empty() {
+            log::debug!("Exception list {}: {:?}", i, exceptions);
         }
+        exception_lists.push(exceptions);
     }
     Ok(exception_lists)
 }
 
 impl<'a> WIAReadStream<'a> {
-    pub(crate) fn new(disc_io: &'a DiscIOWIA, offset: u64, encrypt: bool) -> io::Result<Self> {
-        let result = match disc_io.group_for_offset(offset) {
-            Some(v) => v,
-            None => return Err(io::Error::from(io::ErrorKind::InvalidInput)),
-        };
-        let file = BufReader::new(File::open(&disc_io.filename)?);
-        let decompressor = Decompressor::new(&disc_io.disc)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        let mut stream = Self {
+    pub fn new(disc_io: &'a DiscIOWIA, encrypt: bool) -> Result<Self> {
+        let file = BufReader::new(
+            File::open(&disc_io.filename)
+                .with_context(|| format!("Opening file {}", disc_io.filename.display()))?,
+        );
+        let decompressor = Decompressor::new(&disc_io.disc)?;
+        let stream = Self {
             disc_io,
             file,
-            offset,
-            group_offset: result.disc_offset,
+            offset: 0,
+            group_offset: u64::MAX,
             group_data: Vec::new(),
             exception_lists: vec![],
             decompressor,
             encrypt,
         };
-        stream.read_group(result)?; // Initialize group data
         Ok(stream)
     }
 
@@ -1307,7 +913,7 @@ impl<'a> WIAReadStream<'a> {
     /// Reads new group data into the buffer, handling decompression and RVZ packing.
     fn read_group(&mut self, result: GroupResult) -> io::Result<()> {
         // Special case for all-zero data
-        if result.group.data_size == 0 {
+        if result.group.data_size() == 0 {
             self.exception_lists.clear();
             let size = min(result.chunk_size as u64, result.partition_end - result.partition_offset)
                 as usize;
@@ -1317,18 +923,18 @@ impl<'a> WIAReadStream<'a> {
         }
 
         self.group_data = Vec::with_capacity(result.chunk_size as usize);
-        let group_data_start = result.group.data_offset as u64 * 4;
+        let group_data_start = result.group.data_offset.get() as u64 * 4;
         self.file.seek(SeekFrom::Start(group_data_start))?;
 
-        let mut reader = (&mut self.file).take_seek(result.group.data_size as u64);
+        let mut reader = (&mut self.file).take_seek(result.group.data_size() as u64);
         let uncompressed_exception_lists =
-            matches!(self.disc_io.disc.compression, Compression::None | Compression::Purge)
-                || !result.group.is_compressed;
+            matches!(self.disc_io.disc.compression(), Compression::None | Compression::Purge)
+                || !result.group.is_compressed();
         if uncompressed_exception_lists {
             self.exception_lists = read_exception_lists(
                 &mut reader,
                 result.partition_index,
-                self.disc_io.disc.chunk_size, // result.chunk_size?
+                self.disc_io.disc.chunk_size.get(), // result.chunk_size?
             )?;
             // Align to 4
             let rem = reader.stream_position()? % 4;
@@ -1336,35 +942,30 @@ impl<'a> WIAReadStream<'a> {
                 reader.seek(SeekFrom::Current((4 - rem) as i64))?;
             }
         }
-        let mut reader: Box<dyn Read> =
-            if result.group.is_compressed && self.disc_io.disc.compression != Compression::None {
-                self.decompressor
-                    .wrap(reader)
-                    .map_err(|v| io::Error::new(io::ErrorKind::InvalidData, v))?
-            } else {
-                Box::new(reader)
-            };
+        let mut reader: Box<dyn Read> = if result.group.is_compressed() {
+            self.decompressor.wrap(reader)?
+        } else {
+            Box::new(reader)
+        };
         if !uncompressed_exception_lists {
             self.exception_lists = read_exception_lists(
                 reader.as_mut(),
                 result.partition_index,
-                self.disc_io.disc.chunk_size, // result.chunk_size?
+                self.disc_io.disc.chunk_size.get(), // result.chunk_size?
             )?;
         }
 
-        if result.group.rvz_packed_size > 0 {
+        if result.group.rvz_packed_size.get() > 0 {
             // Decode RVZ packed data
             let mut lfg = LaggedFibonacci::default();
             loop {
                 let mut size_bytes = [0u8; 4];
-                let read = reader.read(&mut size_bytes)?;
-                if read == 0 {
-                    break;
-                } else if read < 4 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "Failed to read RVZ packed size",
-                    ));
+                match reader.read_exact(&mut size_bytes) {
+                    Ok(_) => {}
+                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                    Err(e) => {
+                        return Err(io::Error::new(e.kind(), "Failed to read RVZ packed size"));
+                    }
                 }
                 let size = u32::from_be_bytes(size_bytes);
                 let cur_data_len = self.group_data.len();
@@ -1396,7 +997,7 @@ impl<'a> WIAReadStream<'a> {
 
     fn recalculate_hashes(&mut self, result: GroupResult) -> io::Result<()> {
         let Some(partition_index) = result.partition_index else {
-            // Data not inside of a Wii partition
+            // Data not inside a Wii partition
             return Ok(());
         };
         let hash_table = self.disc_io.hash_tables.get(partition_index);
@@ -1422,12 +1023,14 @@ impl<'a> WIAReadStream<'a> {
                 array_ref_mut![out, n * 20, 20].copy_from_slice(&hash);
             }
 
+            // Copy data
+            array_ref_mut![out, 0x400, BLOCK_SIZE].copy_from_slice(data);
+
             // Rebuild H1 and H2 hashes if available
-            let mut data_copied = false;
             if let Some(hash_table) = hash_table {
                 let partition = &self.disc_io.partitions[partition_index];
                 let part_sector = (result.disc_offset / SECTOR_SIZE as u64) as usize + i
-                    - partition.partition_data[0].first_sector as usize;
+                    - partition.partition_data[0].first_sector.get() as usize;
                 let h1_start = part_sector & !7;
                 for i in 0..8 {
                     array_ref_mut![out, 0x280 + i * 20, 20]
@@ -1439,46 +1042,12 @@ impl<'a> WIAReadStream<'a> {
                         .copy_from_slice(&hash_table.h2_hashes[h2_start + i]);
                 }
 
-                // if result.disc_offset == 0x9150000 {
-                //     println!("Validating hashes for sector {}: {:X?}", part_sector, result);
-                //     // Print H0 hashes
-                //     for i in 0..31 {
-                //         println!("H0 hash {} {:x}", i, as_digest(array_ref![out, i * 20, 20]));
-                //     }
-                //     // Print H1 hashes
-                //     for i in 0..8 {
-                //         println!(
-                //             "H1 hash {} {:x}",
-                //             i,
-                //             as_digest(array_ref![out, 0x280 + i * 20, 20])
-                //         );
-                //     }
-                //     // Print H2 hashes
-                //     for i in 0..8 {
-                //         println!(
-                //             "H2 hash {} {:x}",
-                //             i,
-                //             as_digest(array_ref![out, 0x340 + i * 20, 20])
-                //         );
-                //     }
-                // }
-
                 if self.encrypt {
                     // Re-encrypt hashes and data
-                    let key = (&partition.partition_key).into();
-                    Aes128Cbc::new(key, &Block::from([0u8; 16]))
-                        .encrypt_padded_mut::<NoPadding>(&mut out[..HASHES_SIZE], HASHES_SIZE)
-                        .expect("Failed to encrypt hashes");
-                    Aes128Cbc::new(key, &Block::from(*array_ref![out, 0x3d0, 16]))
-                        .encrypt_padded_b2b_mut::<NoPadding>(data, &mut out[HASHES_SIZE..])
-                        .expect("Failed to encrypt data");
-                    data_copied = true;
+                    aes_encrypt(&partition.partition_key, [0u8; 16], &mut out[..HASHES_SIZE]);
+                    let iv = *array_ref![out, 0x3d0, 16];
+                    aes_encrypt(&partition.partition_key, iv, &mut out[HASHES_SIZE..]);
                 }
-            }
-
-            if !data_copied {
-                // Copy decrypted data
-                array_ref_mut![out, 0x400, BLOCK_SIZE].copy_from_slice(data);
             }
         }
 
@@ -1524,8 +1093,8 @@ impl<'a> Seek for WIAReadStream<'a> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         self.offset = match pos {
             SeekFrom::Start(v) => v,
-            SeekFrom::End(v) => (self.stable_stream_len()? as i64 + v) as u64,
-            SeekFrom::Current(v) => (self.offset as i64 + v) as u64,
+            SeekFrom::End(v) => self.disc_io.header.iso_file_size.get().saturating_add_signed(v),
+            SeekFrom::Current(v) => self.offset.saturating_add_signed(v),
         };
         self.check_group()?;
         Ok(self.offset)
@@ -1535,7 +1104,9 @@ impl<'a> Seek for WIAReadStream<'a> {
 }
 
 impl<'a> ReadStream for WIAReadStream<'a> {
-    fn stable_stream_len(&mut self) -> io::Result<u64> { Ok(self.disc_io.header.iso_file_size) }
+    fn stable_stream_len(&mut self) -> io::Result<u64> {
+        Ok(self.disc_io.header.iso_file_size.get())
+    }
 
     fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
 }

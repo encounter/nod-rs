@@ -1,4 +1,4 @@
-#![warn(missing_docs, rustdoc::missing_doc_code_examples)]
+// #![warn(missing_docs, rustdoc::missing_doc_code_examples)]
 //! Library for traversing & reading GameCube and Wii disc images.
 //!
 //! Based on the C++ library [nod](https://github.com/AxioDL/nod),
@@ -16,22 +16,17 @@
 //! ```no_run
 //! use std::io::Read;
 //!
-//! use nod::{
-//!     disc::{new_disc_base, PartHeader},
-//!     fst::NodeType,
-//!     io::{new_disc_io, DiscIOOptions},
-//! };
+//! use nod::{Disc, PartitionKind};
 //!
 //! fn main() -> nod::Result<()> {
-//!     let options = DiscIOOptions::default();
-//!     let mut disc_io = new_disc_io("path/to/file.iso".as_ref(), &options)?;
-//!     let disc_base = new_disc_base(disc_io.as_mut())?;
-//!     let mut partition = disc_base.get_data_partition(disc_io.as_mut(), false)?;
-//!     let header = partition.read_header()?;
-//!     if let Some(NodeType::File(node)) = header.find_node("/MP3/Worlds.txt") {
+//!     let disc = Disc::new("path/to/file.iso")?;
+//!     let mut partition = disc.open_partition_kind(PartitionKind::Data)?;
+//!     let meta = partition.meta()?;
+//!     let fst = meta.fst()?;
+//!     if let Some((_, node)) = fst.find("/MP3/Worlds.txt") {
 //!         let mut s = String::new();
 //!         partition
-//!             .begin_file_stream(node)
+//!             .open_file(node)
 //!             .expect("Failed to open file stream")
 //!             .read_to_string(&mut s)
 //!             .expect("Failed to read file");
@@ -40,11 +35,24 @@
 //!     Ok(())
 //! }
 //! ```
-pub mod disc;
-pub mod fst;
-pub mod io;
-pub mod streams;
-pub mod util;
+
+use std::path::Path;
+
+use disc::DiscBase;
+pub use disc::{
+    AppLoaderHeader, DiscHeader, DolHeader, PartitionBase, PartitionHeader, PartitionInfo,
+    PartitionKind, PartitionMeta, BI2_SIZE, BOOT_SIZE,
+};
+pub use fst::{Fst, Node, NodeKind};
+use io::DiscIO;
+pub use io::DiscMeta;
+pub use streams::ReadStream;
+
+mod disc;
+mod fst;
+mod io;
+mod streams;
+mod util;
 
 /// Error types for nod.
 #[derive(thiserror::Error, Debug)]
@@ -55,18 +63,21 @@ pub enum Error {
     /// A general I/O error.
     #[error("I/O error: {0}")]
     Io(String, #[source] std::io::Error),
+    /// An unknown error.
+    #[error("error: {0}")]
+    Other(String),
+}
+
+impl From<&str> for Error {
+    fn from(s: &str) -> Error { Error::Other(s.to_string()) }
+}
+
+impl From<String> for Error {
+    fn from(s: String) -> Error { Error::Other(s) }
 }
 
 /// Helper result type for [`Error`].
 pub type Result<T, E = Error> = core::result::Result<T, E>;
-
-impl From<aes::cipher::block_padding::UnpadError> for Error {
-    fn from(_: aes::cipher::block_padding::UnpadError) -> Self { unreachable!() }
-}
-
-impl From<base16ct::Error> for Error {
-    fn from(_: base16ct::Error) -> Self { unreachable!() }
-}
 
 pub trait ErrorContext {
     fn context(self, context: impl Into<String>) -> Error;
@@ -93,5 +104,74 @@ where E: ErrorContext
     fn with_context<F>(self, f: F) -> Result<T>
     where F: FnOnce() -> String {
         self.map_err(|e| e.context(f()))
+    }
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct OpenOptions {
+    /// Wii: Validate partition data hashes while reading the disc image if present.
+    pub validate_hashes: bool,
+    /// Wii: Rebuild partition data hashes for the disc image if the underlying format
+    /// does not store them. (e.g. WIA/RVZ)
+    pub rebuild_hashes: bool,
+    /// Wii: Rebuild partition data encryption if the underlying format stores data decrypted.
+    /// (e.g. WIA/RVZ, NFS)
+    ///
+    /// Unnecessary if only opening a disc partition stream, which will already provide a decrypted
+    /// stream. In this case, this will cause unnecessary processing.
+    ///
+    /// Only valid in combination with `rebuild_hashes`, as the data encryption is derived from the
+    /// partition data hashes.
+    pub rebuild_encryption: bool,
+}
+
+pub struct Disc {
+    io: Box<dyn DiscIO>,
+    base: Box<dyn DiscBase>,
+    options: OpenOptions,
+}
+
+impl Disc {
+    /// Opens a disc image from a file path.
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Disc> {
+        Disc::new_with_options(path, &OpenOptions::default())
+    }
+
+    /// Opens a disc image from a file path with custom options.
+    pub fn new_with_options<P: AsRef<Path>>(path: P, options: &OpenOptions) -> Result<Disc> {
+        let mut io = io::open(path.as_ref(), options)?;
+        let base = disc::new(io.as_mut())?;
+        Ok(Disc { io, base, options: options.clone() })
+    }
+
+    /// The disc's header.
+    pub fn header(&self) -> &DiscHeader { self.base.header() }
+
+    /// Returns extra metadata included in the disc file format, if any.
+    pub fn meta(&self) -> Result<DiscMeta> { self.io.meta() }
+
+    /// The disc's size in bytes or an estimate if not stored by the format.
+    pub fn disc_size(&self) -> u64 { self.base.disc_size() }
+
+    /// A list of partitions on the disc.
+    ///
+    /// For GameCube discs, this will return a single data partition spanning the entire disc.
+    pub fn partitions(&self) -> Vec<PartitionInfo> { self.base.partitions() }
+
+    /// Opens a new read stream for the base disc image.
+    ///
+    /// Generally does _not_ need to be used directly. Opening a partition will provide a
+    /// decrypted stream instead.
+    pub fn open(&self) -> Result<Box<dyn ReadStream + '_>> { self.io.open() }
+
+    /// Opens a new, decrypted partition read stream for the specified partition index.
+    pub fn open_partition(&self, index: usize) -> Result<Box<dyn PartitionBase + '_>> {
+        self.base.open_partition(self.io.as_ref(), index, &self.options)
+    }
+
+    /// Opens a new partition read stream for the first partition matching
+    /// the specified type.
+    pub fn open_partition_kind(&self, kind: PartitionKind) -> Result<Box<dyn PartitionBase + '_>> {
+        self.base.open_partition_kind(self.io.as_ref(), kind, &self.options)
     }
 }

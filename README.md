@@ -10,52 +10,68 @@
 
 Library for traversing & reading GameCube and Wii disc images.
 
-Based on the C++ library [nod](https://github.com/AxioDL/nod),
+Originally based on the C++ library [nod](https://github.com/AxioDL/nod),
 but does not currently support authoring.
 
 Currently supported file formats:
 - ISO (GCM)
 - WIA / RVZ
 - WBFS
-- NFS (Wii U VC files, e.g. `hif_000000.nfs`)
+- CISO
+- NFS (Wii U VC)
 
-### CLI tool
+## CLI tool
 
-This crate includes a CLI tool `nodtool`, which can be used to extract disc images to a specified directory:
+This crate includes a command-line tool called `nodtool`. 
+
+### info
+
+Displays information about a disc image.
+
+```shell
+nodtool info /path/to/game.iso
+```
+
+### extract
+
+Extracts the contents of a disc image to a directory.
 
 ```shell
 nodtool extract /path/to/game.iso [outdir]
 ```
 
-For Wii U VC titles, use `content/hif_*.nfs`:
+For Wii U VC titles, use `content/hif_000000.nfs`:
 
 ```shell
 nodtool extract /path/to/game/content/hif_000000.nfs [outdir]
 ```
 
-### Library example
+### convert
+
+Converts any supported format to raw ISO.
+
+```shell
+nodtool convert /path/to/game.wia /path/to/game.iso
+``` 
+
+## Library example
 
 Opening a disc image and reading a file:
 
 ```rust
 use std::io::Read;
 
-use nod::{
-    disc::{new_disc_base, PartHeader},
-    fst::NodeType,
-    io::{new_disc_io, DiscIOOptions},
-};
+use nod::{Disc, PartitionKind};
 
 fn main() -> nod::Result<()> {
-    let options = DiscIOOptions::default();
-    let mut disc_io = new_disc_io("path/to/file.iso".as_ref(), &options)?;
-    let disc_base = new_disc_base(disc_io.as_mut())?;
-    let mut partition = disc_base.get_data_partition(disc_io.as_mut(), false)?;
-    let header = partition.read_header()?;
-    if let Some(NodeType::File(node)) = header.find_node("/MP3/Worlds.txt") {
+    let disc = Disc::new("path/to/file.iso")?;
+    let mut partition = disc.open_partition_kind(PartitionKind::Data)?;
+    let meta = partition.meta()?;
+    let fst = meta.fst()?;
+    if let Some((_, node)) = fst.find("/MP3/Worlds.txt") {
         let mut s = String::new();
         partition
-            .begin_file_stream(node)
+            .open_file(node)
             .expect("Failed to open file stream")
             .read_to_string(&mut s)
             .expect("Failed to read file");
@@ -65,7 +81,7 @@ fn main() -> nod::Result<()> {
 }
 ```
 
-### License
+## License
 
 Licensed under either of
 

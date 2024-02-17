@@ -1,49 +1,25 @@
-use std::{
-    fs::File,
-    io,
-    io::{Seek, SeekFrom},
-    path::{Path, PathBuf},
+use std::{io::BufReader, path::Path};
+
+use crate::{
+    io::{split::SplitFileReader, DiscIO},
+    streams::ReadStream,
+    Result,
 };
 
-use crate::{io::DiscIO, streams::ReadStream, Result};
-
-pub(crate) struct DiscIOISO {
-    pub(crate) filename: PathBuf,
+pub struct DiscIOISO {
+    pub inner: SplitFileReader,
 }
 
 impl DiscIOISO {
-    pub(crate) fn new(filename: &Path) -> Result<DiscIOISO> {
-        Ok(DiscIOISO { filename: filename.to_owned() })
+    pub fn new(filename: &Path) -> Result<Self> {
+        Ok(Self { inner: SplitFileReader::new(filename)? })
     }
 }
 
 impl DiscIO for DiscIOISO {
-    fn begin_read_stream(&mut self, offset: u64) -> io::Result<Box<dyn ReadStream>> {
-        let mut file = File::open(&*self.filename)?;
-        file.seek(SeekFrom::Start(offset))?;
-        Ok(Box::from(file))
+    fn open(&self) -> Result<Box<dyn ReadStream>> {
+        Ok(Box::new(BufReader::new(self.inner.clone())))
     }
-}
 
-pub(crate) struct DiscIOISOStream<T>
-where T: ReadStream + Sized
-{
-    pub(crate) stream: T,
-}
-
-impl<T> DiscIOISOStream<T>
-where T: ReadStream + Sized
-{
-    pub(crate) fn new(stream: T) -> Result<DiscIOISOStream<T>> { Ok(DiscIOISOStream { stream }) }
-}
-
-impl<T> DiscIO for DiscIOISOStream<T>
-where T: ReadStream + Sized + Send + Sync
-{
-    fn begin_read_stream<'a>(&'a mut self, offset: u64) -> io::Result<Box<dyn ReadStream + 'a>> {
-        let size = self.stream.stable_stream_len()?;
-        let mut stream = self.stream.new_window(0, size)?;
-        stream.seek(SeekFrom::Start(offset))?;
-        Ok(Box::from(stream))
-    }
+    fn disc_size(&self) -> Option<u64> { Some(self.inner.len()) }
 }
