@@ -46,6 +46,7 @@ impl LaggedFibonacci {
             init[0].wrapping_add(init[1]),
         ]) ^ disc_num as u32;
         let sector = (partition_offset / SECTOR_SIZE as u64) as u32;
+        let sector_offset = partition_offset % SECTOR_SIZE as u64;
         let mut n = seed.wrapping_mul(0x260BCD5) ^ sector.wrapping_mul(0x1EF29123);
         for i in 0..SEED_SIZE {
             let mut v = 0u32;
@@ -58,7 +59,7 @@ impl LaggedFibonacci {
         self.buffer[16] ^= self.buffer[0] >> 9 ^ self.buffer[16] << 23;
         self.position = 0;
         self.init();
-        self.skip((partition_offset % SECTOR_SIZE as u64) as usize);
+        self.skip(sector_offset as usize);
     }
 
     pub fn init_with_reader<R>(&mut self, reader: &mut R) -> io::Result<()>

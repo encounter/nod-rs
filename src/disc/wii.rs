@@ -1,4 +1,6 @@
 use std::{
+    cmp::min,
+    ffi::CStr,
     io,
     io::{Read, Seek, SeekFrom},
     mem::size_of,
@@ -16,36 +18,52 @@ use crate::{
     fst::{Node, NodeKind},
     io::{aes_decrypt, KeyBytes},
     static_assert,
-    streams::{wrap_windowed, ReadStream, SharedWindowedReadStream},
+    streams::{ReadStream, SharedWindowedReadStream},
     util::{
         div_rem,
-        reader::{read_from, read_vec},
+        read::{read_from, read_vec},
     },
     Error, OpenOptions, PartitionHeader, Result, ResultContext,
 };
 
 pub(crate) const HASHES_SIZE: usize = 0x400;
-pub(crate) const BLOCK_SIZE: usize = SECTOR_SIZE - HASHES_SIZE; // 0x7C00
+pub(crate) const SECTOR_DATA_SIZE: usize = SECTOR_SIZE - HASHES_SIZE; // 0x7C00
 
+// ppki (Retail)
+const RVL_CERT_ISSUER_PPKI_TICKET: &str = "Root-CA00000001-XS00000003";
 #[rustfmt::skip]
-const COMMON_KEYS: [KeyBytes; 2] = [
-    /* Normal */
+const RETAIL_COMMON_KEYS: [KeyBytes; 3] = [
+    /* RVL_KEY_RETAIL */
     [0xeb, 0xe4, 0x2a, 0x22, 0x5e, 0x85, 0x93, 0xe4, 0x48, 0xd9, 0xc5, 0x45, 0x73, 0x81, 0xaa, 0xf7],
-    /* Korean */
+    /* RVL_KEY_KOREAN */
     [0x63, 0xb8, 0x2b, 0xb4, 0xf4, 0x61, 0x4e, 0x2e, 0x13, 0xf2, 0xfe, 0xfb, 0xba, 0x4c, 0x9b, 0x7e],
+    /* vWii_KEY_RETAIL */
+    [0x30, 0xbf, 0xc7, 0x6e, 0x7c, 0x19, 0xaf, 0xbb, 0x23, 0x16, 0x33, 0x30, 0xce, 0xd7, 0xc2, 0x8d],
+];
+
+// dpki (Debug)
+const RVL_CERT_ISSUER_DPKI_TICKET: &str = "Root-CA00000002-XS00000006";
+#[rustfmt::skip]
+const DEBUG_COMMON_KEYS: [KeyBytes; 3] = [
+    /* RVL_KEY_DEBUG */
+    [0xa1, 0x60, 0x4a, 0x6a, 0x71, 0x23, 0xb5, 0x29, 0xae, 0x8b, 0xec, 0x32, 0xc8, 0x16, 0xfc, 0xaa],
+    /* RVL_KEY_KOREAN_DEBUG */
+    [0x67, 0x45, 0x8b, 0x6b, 0xc6, 0x23, 0x7b, 0x32, 0x69, 0x98, 0x3c, 0x64, 0x73, 0x48, 0x33, 0x66],
+    /* vWii_KEY_DEBUG */
+    [0x2f, 0x5c, 0x1b, 0x29, 0x44, 0xe7, 0xfd, 0x6f, 0xc3, 0x97, 0x96, 0x4b, 0x05, 0x76, 0x91, 0xfa],
 ];
 
 #[derive(Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
-struct WiiPartEntry {
-    offset: U32,
-    kind: U32,
+pub(crate) struct WiiPartEntry {
+    pub(crate) offset: U32,
+    pub(crate) kind: U32,
 }
 
 static_assert!(size_of::<WiiPartEntry>() == 8);
 
 impl WiiPartEntry {
-    fn offset(&self) -> u64 { (self.offset.get() as u64) << 2 }
+    pub(crate) fn offset(&self) -> u64 { (self.offset.get() as u64) << 2 }
 }
 
 #[derive(Debug, PartialEq)]
@@ -57,21 +75,22 @@ pub(crate) struct WiiPartInfo {
     pub(crate) header: WiiPartitionHeader,
     pub(crate) junk_id: [u8; 4],
     pub(crate) junk_start: u64,
+    pub(crate) title_key: KeyBytes,
 }
 
-const WII_PART_GROUP_OFF: u64 = 0x40000;
+pub(crate) const WII_PART_GROUP_OFF: u64 = 0x40000;
 
 #[derive(Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
-struct WiiPartGroup {
-    part_count: U32,
-    part_entry_off: U32,
+pub(crate) struct WiiPartGroup {
+    pub(crate) part_count: U32,
+    pub(crate) part_entry_off: U32,
 }
 
 static_assert!(size_of::<WiiPartGroup>() == 8);
 
 impl WiiPartGroup {
-    fn part_entry_off(&self) -> u64 { (self.part_entry_off.get() as u64) << 2 }
+    pub(crate) fn part_entry_off(&self) -> u64 { (self.part_entry_off.get() as u64) << 2 }
 }
 
 #[derive(Debug, Clone, PartialEq, FromBytes, FromZeroes, AsBytes)]
@@ -121,6 +140,31 @@ pub struct Ticket {
 }
 
 static_assert!(size_of::<Ticket>() == 0x2A4);
+
+impl Ticket {
+    pub fn decrypt_title_key(&self) -> Result<KeyBytes> {
+        let mut iv: KeyBytes = [0; 16];
+        iv[..8].copy_from_slice(&self.title_id);
+        let cert_issuer_ticket =
+            CStr::from_bytes_until_nul(&self.sig_issuer).ok().and_then(|c| c.to_str().ok());
+        let common_keys = match cert_issuer_ticket {
+            Some(RVL_CERT_ISSUER_PPKI_TICKET) => &RETAIL_COMMON_KEYS,
+            Some(RVL_CERT_ISSUER_DPKI_TICKET) => &DEBUG_COMMON_KEYS,
+            Some(v) => {
+                return Err(Error::DiscFormat(format!("unknown certificate issuer {:?}", v)));
+            }
+            None => {
+                return Err(Error::DiscFormat("failed to parse certificate issuer".to_string()));
+            }
+        };
+        let common_key = common_keys.get(self.common_key_idx as usize).ok_or(Error::DiscFormat(
+            format!("unknown common key index {}", self.common_key_idx),
+        ))?;
+        let mut title_key = self.title_key;
+        aes_decrypt(common_key, iv, &mut title_key);
+        Ok(title_key)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
@@ -197,14 +241,17 @@ impl DiscWii {
         header: DiscHeader,
         disc_size: Option<u64>,
     ) -> Result<Self> {
-        let part_info = read_partition_info(stream)?;
+        let part_info = read_partition_info(stream, &header)?;
         // Guess disc size if not provided
         let disc_size = disc_size.unwrap_or_else(|| guess_disc_size(&part_info));
         Ok(Self { header, part_info, disc_size })
     }
 }
 
-pub(crate) fn read_partition_info(stream: &mut dyn ReadStream) -> Result<Vec<WiiPartInfo>> {
+pub(crate) fn read_partition_info(
+    stream: &mut dyn ReadStream,
+    disc_header: &DiscHeader,
+) -> Result<Vec<WiiPartInfo>> {
     stream.seek(SeekFrom::Start(WII_PART_GROUP_OFF)).context("Seeking to partition groups")?;
     let part_groups: [WiiPartGroup; 4] = read_from(stream).context("Reading partition groups")?;
     let mut part_info = Vec::new();
@@ -223,32 +270,33 @@ pub(crate) fn read_partition_info(stream: &mut dyn ReadStream) -> Result<Vec<Wii
             stream
                 .seek(SeekFrom::Start(offset))
                 .with_context(|| format!("Seeking to partition data {group_idx}:{part_idx}"))?;
-            let mut header: WiiPartitionHeader = read_from(stream)
+            let header: WiiPartitionHeader = read_from(stream)
                 .with_context(|| format!("Reading partition header {group_idx}:{part_idx}"))?;
 
-            // Decrypt title key
-            let mut iv: KeyBytes = [0; 16];
-            iv[..8].copy_from_slice(&header.ticket.title_id);
-            let common_key =
-                COMMON_KEYS.get(header.ticket.common_key_idx as usize).ok_or(Error::DiscFormat(
-                    format!("unknown common key index {}", header.ticket.common_key_idx),
-                ))?;
-            aes_decrypt(common_key, iv, &mut header.ticket.title_key);
-
             // Open partition stream and read junk data seed
-            let inner = stream
-                .new_window(offset + header.data_off(), header.data_size())
-                .context("Wrapping partition stream")?;
+            // let inner = stream
+            //     .new_window(offset + header.data_off(), DL_DVD_SIZE) // header.data_size()
+            //     .context("Wrapping partition stream")?;
+            let title_key = header.ticket.decrypt_title_key()?;
+            let part_offset = entry.offset() + header.data_off();
+            if part_offset % SECTOR_SIZE as u64 != 0 {
+                return Err(Error::DiscFormat(format!(
+                    "Partition {group_idx}:{part_idx} offset is not sector aligned",
+                )));
+            }
+            let start_sector = (part_offset / SECTOR_SIZE as u64) as u32;
             let mut stream = PartitionWii {
+                start_sector,
                 header: header.clone(),
                 tmd: vec![],
                 cert_chain: vec![],
                 h3_table: vec![],
-                stream: Box::new(inner),
-                key: Some(header.ticket.title_key),
+                stream: Box::new(stream.as_dyn()),
+                key: Some(title_key),
                 offset: 0,
-                cur_block: 0,
+                cur_block: u32::MAX,
                 buf: [0; SECTOR_SIZE],
+                has_hashes: disc_header.no_partition_hashes == 0,
                 validate_hashes: false,
             };
             let junk_id: [u8; 4] = read_from(&mut stream).context("Reading junk seed bytes")?;
@@ -259,12 +307,13 @@ pub(crate) fn read_partition_info(stream: &mut dyn ReadStream) -> Result<Vec<Wii
                 read_from(&mut stream).context("Reading partition header")?;
             let junk_start = part_header.fst_off(true) + part_header.fst_sz(true);
 
-            // log::debug!(
-            //     "Partition: {:?} - {:?}: {:?}",
-            //     offset + header.data_off(),
-            //     header.data_size(),
-            //     header.ticket.title_key
-            // );
+            log::debug!("Header: {:?}", header);
+            log::debug!(
+                "Partition: {:?} - {:?}: {:?}",
+                offset + header.data_off(),
+                header.data_size(),
+                header.ticket.title_key
+            );
 
             part_info.push(WiiPartInfo {
                 group_idx: group_idx as u32,
@@ -274,6 +323,7 @@ pub(crate) fn read_partition_info(stream: &mut dyn ReadStream) -> Result<Vec<Wii
                 header,
                 junk_id,
                 junk_start,
+                title_key,
             });
         }
     }
@@ -309,8 +359,6 @@ fn open_partition<'a>(
     options: &OpenOptions,
     header: &DiscHeader,
 ) -> Result<Box<dyn PartitionBase + 'a>> {
-    let data_off = part.offset + part.header.data_off();
-    let has_crypto = header.no_partition_encryption == 0;
     let mut base = disc_io.open()?;
 
     base.seek(SeekFrom::Start(part.offset + part.header.tmd_off()))
@@ -327,19 +375,31 @@ fn open_partition<'a>(
         .context("Seeking to H3 table offset")?;
     let h3_table: Vec<u8> = read_vec(&mut base, H3_TABLE_SIZE).context("Reading H3 table")?;
 
-    let stream = wrap_windowed(base, data_off, part.header.data_size()).with_context(|| {
-        format!("Wrapping {}:{} partition stream", part.group_idx, part.part_idx)
-    })?;
+    let key = if header.no_partition_encryption == 0 {
+        Some(part.header.ticket.decrypt_title_key()?)
+    } else {
+        None
+    };
+    let data_off = part.offset + part.header.data_off();
+    if data_off % SECTOR_SIZE as u64 != 0 {
+        return Err(Error::DiscFormat(format!(
+            "Partition {}:{} offset is not sector aligned",
+            part.group_idx, part.part_idx
+        )));
+    }
+    let start_sector = (data_off / SECTOR_SIZE as u64) as u32;
     Ok(Box::new(PartitionWii {
+        start_sector,
         header: part.header.clone(),
         tmd,
         cert_chain,
         h3_table,
-        stream: Box::new(stream),
-        key: has_crypto.then_some(part.header.ticket.title_key),
+        stream: base,
+        key,
         offset: 0,
         cur_block: u32::MAX,
         buf: [0; SECTOR_SIZE],
+        has_hashes: header.no_partition_hashes == 0,
         validate_hashes: options.validate_hashes && header.no_partition_hashes == 0,
     }))
 }
@@ -392,6 +452,7 @@ impl DiscBase for DiscWii {
 }
 
 struct PartitionWii<'a> {
+    start_sector: u32,
     header: WiiPartitionHeader,
     tmd: Vec<u8>,
     cert_chain: Vec<u8>,
@@ -402,6 +463,7 @@ struct PartitionWii<'a> {
     offset: u64,
     cur_block: u32,
     buf: [u8; SECTOR_SIZE],
+    has_hashes: bool,
     validate_hashes: bool,
 }
 
@@ -409,10 +471,10 @@ impl<'a> PartitionBase for PartitionWii<'a> {
     fn meta(&mut self) -> Result<Box<PartitionMeta>> {
         self.seek(SeekFrom::Start(0)).context("Seeking to partition header")?;
         let mut meta = read_part_header(self, true)?;
-        meta.raw_ticket = Some(self.header.ticket.as_bytes().to_vec());
-        meta.raw_tmd = Some(self.tmd.clone());
-        meta.raw_cert_chain = Some(self.cert_chain.clone());
-        meta.raw_h3_table = Some(self.h3_table.clone());
+        meta.raw_ticket = Some(Box::from(self.header.ticket.as_bytes()));
+        meta.raw_tmd = Some(Box::from(self.tmd.as_slice()));
+        meta.raw_cert_chain = Some(Box::from(self.cert_chain.as_slice()));
+        meta.raw_h3_table = Some(Box::from(self.h3_table.as_slice()));
         Ok(meta)
     }
 
@@ -421,7 +483,13 @@ impl<'a> PartitionBase for PartitionWii<'a> {
         self.new_window(node.offset(true), node.length(true))
     }
 
-    fn ideal_buffer_size(&self) -> usize { BLOCK_SIZE }
+    fn ideal_buffer_size(&self) -> usize {
+        if self.has_hashes {
+            SECTOR_DATA_SIZE
+        } else {
+            SECTOR_SIZE
+        }
+    }
 }
 
 #[inline(always)]
@@ -495,65 +563,76 @@ fn decrypt_block(part: &mut PartitionWii, cluster: u32) -> io::Result<()> {
 
 impl<'a> Read for PartitionWii<'a> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let (block, block_offset) = div_rem(self.offset, BLOCK_SIZE as u64);
-        let mut block = block as u32;
-        let mut block_offset = block_offset as usize;
-
-        let mut rem = buf.len();
-        let mut read: usize = 0;
-
-        while rem > 0 {
-            if block != self.cur_block {
-                decrypt_block(self, block)?;
-                self.cur_block = block;
-            }
-
-            let mut cache_size = rem;
-            if cache_size + block_offset > BLOCK_SIZE {
-                cache_size = BLOCK_SIZE - block_offset;
-            }
-
-            buf[read..read + cache_size].copy_from_slice(
-                &self.buf[HASHES_SIZE + block_offset..HASHES_SIZE + block_offset + cache_size],
-            );
-            read += cache_size;
-            rem -= cache_size;
-            block_offset = 0;
-            block += 1;
+        let block_size = self.ideal_buffer_size() as u64;
+        let (block, block_offset) = div_rem(self.offset, block_size);
+        let block = block as u32;
+        if block != self.cur_block {
+            self.stream
+                .seek(SeekFrom::Start((self.start_sector + block) as u64 * SECTOR_SIZE as u64))?;
+            decrypt_block(self, block)?;
+            self.cur_block = block;
         }
 
-        self.offset += buf.len() as u64;
-        Ok(buf.len())
+        let offset = (SECTOR_SIZE - block_size as usize) + block_offset as usize;
+        let read = min(buf.len(), block_size as usize - block_offset as usize);
+        buf[..read].copy_from_slice(&self.buf[offset..offset + read]);
+        self.offset += read as u64;
+        Ok(read)
+
+        // let mut block = block as u32;
+        //
+        // let mut rem = buf.len();
+        // let mut read: usize = 0;
+        //
+        // while rem > 0 {
+        //     if block != self.cur_block {
+        //         decrypt_block(self, block)?;
+        //         self.cur_block = block;
+        //     }
+        //
+        //     let mut cache_size = rem;
+        //     if cache_size as u64 + block_offset > block_size {
+        //         cache_size = (block_size - block_offset) as usize;
+        //     }
+        //
+        //     let hashes_size = SECTOR_SIZE - block_size as usize;
+        //     let start = hashes_size + block_offset as usize;
+        //     buf[read..read + cache_size].copy_from_slice(&self.buf[start..start + cache_size]);
+        //     read += cache_size;
+        //     rem -= cache_size;
+        //     block_offset = 0;
+        //     block += 1;
+        // }
+        //
+        // self.offset += buf.len() as u64;
+        // Ok(buf.len())
     }
 }
 
 #[inline(always)]
 fn to_block_size(v: u64) -> u64 {
-    (v / SECTOR_SIZE as u64) * BLOCK_SIZE as u64 + (v % SECTOR_SIZE as u64)
+    (v / SECTOR_SIZE as u64) * SECTOR_DATA_SIZE as u64 + (v % SECTOR_SIZE as u64)
 }
 
 impl<'a> Seek for PartitionWii<'a> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         self.offset = match pos {
             SeekFrom::Start(v) => v,
-            SeekFrom::End(v) => self.stable_stream_len()?.saturating_add_signed(v),
+            SeekFrom::End(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "PartitionWii: SeekFrom::End is not supported",
+                ));
+            }
             SeekFrom::Current(v) => self.offset.saturating_add_signed(v),
         };
-        let block = self.offset / BLOCK_SIZE as u64;
-        if block as u32 != self.cur_block {
-            self.stream.seek(SeekFrom::Start(block * SECTOR_SIZE as u64))?;
-            self.cur_block = u32::MAX;
-        }
+        // let block = self.offset / self.ideal_buffer_size() as u64;
+        // if block as u32 != self.cur_block {
+        //     self.stream.seek(SeekFrom::Start((self.start_sector + block) * SECTOR_SIZE as u64))?;
+        //     self.cur_block = u32::MAX;
+        // }
         Ok(self.offset)
     }
 
     fn stream_position(&mut self) -> io::Result<u64> { Ok(self.offset) }
-}
-
-impl<'a> ReadStream for PartitionWii<'a> {
-    fn stable_stream_len(&mut self) -> io::Result<u64> {
-        Ok(to_block_size(self.stream.stable_stream_len()?))
-    }
-
-    fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
 }

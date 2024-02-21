@@ -19,6 +19,9 @@ build = "build.rs"
 name = "nodtool"
 path = "src/bin.rs"
 
+[profile.release]
+debug = true
+
 [profile.release-lto]
 inherits = "release"
 lto = "thin"
@@ -41,6 +44,7 @@ bzip2 = { version = "0.4.4", features = ["static"], optional = true }
 cbc = "0.1.2"
 crc32fast = "1.4.0"
 digest = "0.10.7"
+dyn-clone = "1.0.16"
 enable-ansi-support = "0.2.1"
 encoding_rs = "0.8.33"
 file-size = "1.0.3"

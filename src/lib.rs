@@ -38,19 +38,20 @@
 
 use std::path::Path;
 
-use disc::DiscBase;
 pub use disc::{
     AppLoaderHeader, DiscHeader, DolHeader, PartitionBase, PartitionHeader, PartitionInfo,
-    PartitionKind, PartitionMeta, BI2_SIZE, BOOT_SIZE,
+    PartitionKind, PartitionMeta, BI2_SIZE, BOOT_SIZE, SECTOR_SIZE,
 };
 pub use fst::{Fst, Node, NodeKind};
-use io::DiscIO;
 pub use io::DiscMeta;
+use io::{block, block::BPartitionInfo};
 pub use streams::ReadStream;
+
+use crate::disc::reader::{DiscReader, EncryptionMode};
 
 mod disc;
 mod fst;
-mod io;
+pub mod io;
 mod streams;
 mod util;
 
@@ -126,8 +127,7 @@ pub struct OpenOptions {
 }
 
 pub struct Disc {
-    io: Box<dyn DiscIO>,
-    base: Box<dyn DiscBase>,
+    pub reader: DiscReader,
     options: OpenOptions,
 }
 
@@ -139,39 +139,39 @@ impl Disc {
 
     /// Opens a disc image from a file path with custom options.
     pub fn new_with_options<P: AsRef<Path>>(path: P, options: &OpenOptions) -> Result<Disc> {
-        let mut io = io::open(path.as_ref(), options)?;
-        let base = disc::new(io.as_mut())?;
-        Ok(Disc { io, base, options: options.clone() })
+        let io = block::open(path.as_ref(), options)?;
+        let reader = DiscReader::new(io, EncryptionMode::Encrypted)?;
+        Ok(Disc { reader, options: options.clone() })
     }
 
     /// The disc's header.
-    pub fn header(&self) -> &DiscHeader { self.base.header() }
+    pub fn header(&self) -> &DiscHeader { self.reader.header() }
 
     /// Returns extra metadata included in the disc file format, if any.
-    pub fn meta(&self) -> Result<DiscMeta> { self.io.meta() }
+    pub fn meta(&self) -> Result<DiscMeta> { self.reader.io.meta() }
 
     /// The disc's size in bytes or an estimate if not stored by the format.
-    pub fn disc_size(&self) -> u64 { self.base.disc_size() }
+    pub fn disc_size(&self) -> u64 { self.reader.disc_size() }
 
     /// A list of partitions on the disc.
     ///
     /// For GameCube discs, this will return a single data partition spanning the entire disc.
-    pub fn partitions(&self) -> Vec<PartitionInfo> { self.base.partitions() }
+    pub fn partitions(&self) -> &[BPartitionInfo] { self.reader.partitions() }
 
-    /// Opens a new read stream for the base disc image.
-    ///
-    /// Generally does _not_ need to be used directly. Opening a partition will provide a
-    /// decrypted stream instead.
-    pub fn open(&self) -> Result<Box<dyn ReadStream + '_>> { self.io.open() }
-
-    /// Opens a new, decrypted partition read stream for the specified partition index.
-    pub fn open_partition(&self, index: usize) -> Result<Box<dyn PartitionBase + '_>> {
-        self.base.open_partition(self.io.as_ref(), index, &self.options)
-    }
-
-    /// Opens a new partition read stream for the first partition matching
-    /// the specified type.
-    pub fn open_partition_kind(&self, kind: PartitionKind) -> Result<Box<dyn PartitionBase + '_>> {
-        self.base.open_partition_kind(self.io.as_ref(), kind, &self.options)
-    }
+    // /// Opens a new read stream for the base disc image.
+    // ///
+    // /// Generally does _not_ need to be used directly. Opening a partition will provide a
+    // /// decrypted stream instead.
+    // pub fn open(&self) -> Result<Box<dyn ReadStream + '_>> { self.io.open() }
+    //
+    // /// Opens a new, decrypted partition read stream for the specified partition index.
+    // pub fn open_partition(&self, index: usize) -> Result<Box<dyn PartitionBase + '_>> {
+    //     self.base.open_partition(self.io.as_ref(), index, &self.options)
+    // }
+    //
+    // /// Opens a new partition read stream for the first partition matching
+    // /// the specified type.
+    // pub fn open_partition_kind(&self, kind: PartitionKind) -> Result<Box<dyn PartitionBase + '_>> {
+    //     self.base.open_partition_kind(self.io.as_ref(), kind, &self.options)
+    // }
 }

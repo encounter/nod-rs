@@ -1,34 +1,32 @@
 use std::{
-    cmp::min,
-    fs::File,
     io,
-    io::{BufReader, Read, Seek, SeekFrom},
+    io::{Read, Seek, SeekFrom},
     mem::size_of,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    time::Instant,
+    path::Path,
 };
 
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use sha1::{Digest, Sha1};
 use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
 
 use crate::{
-    array_ref, array_ref_mut,
     disc::{
-        wii::{BLOCK_SIZE, HASHES_SIZE},
+        wii::{HASHES_SIZE, SECTOR_DATA_SIZE},
         SECTOR_SIZE,
     },
-    io::{aes_encrypt, nkit::NKitHeader, DiscIO, DiscMeta, HashBytes, KeyBytes, MagicBytes},
+    io::{
+        block::{BPartitionInfo, Block, BlockIO},
+        nkit::NKitHeader,
+        split::SplitFileReader,
+        HashBytes, KeyBytes, MagicBytes,
+    },
     static_assert,
-    streams::ReadStream,
     util::{
         compress::{lzma2_props_decode, lzma_props_decode, new_lzma2_decoder, new_lzma_decoder},
         lfg::LaggedFibonacci,
-        reader::{read_from, read_u16_be, read_vec},
+        read::{read_box_slice, read_from, read_u16_be, read_vec},
         take_seek::TakeSeekExt,
     },
-    Error, OpenOptions, Result, ResultContext,
+    DiscMeta, Error, OpenOptions, Result, ResultContext,
 };
 
 pub const WIA_MAGIC: MagicBytes = *b"WIA\x01";
@@ -262,6 +260,13 @@ pub struct WIAPartitionData {
 
 static_assert!(size_of::<WIAPartitionData>() == 0x10);
 
+impl WIAPartitionData {
+    pub fn contains(&self, sector: u32) -> bool {
+        let start = self.first_sector.get();
+        sector >= start && sector < start + self.num_sectors.get()
+    }
+}
+
 /// This struct is used for keeping track of Wii partition data that on the actual disc is encrypted
 /// and hashed. This does not include the unencrypted area at the beginning of partitions that
 /// contains the ticket, TMD, certificate chain, and H3 table. So for a typical game partition,
@@ -313,6 +318,20 @@ pub struct WIARawData {
     pub num_groups: U32,
 }
 
+impl WIARawData {
+    pub fn start_offset(&self) -> u64 { self.raw_data_offset.get() & !(SECTOR_SIZE as u64 - 1) }
+
+    pub fn start_sector(&self) -> u32 { (self.start_offset() / SECTOR_SIZE as u64) as u32 }
+
+    pub fn end_offset(&self) -> u64 { self.raw_data_offset.get() + self.raw_data_size.get() }
+
+    pub fn end_sector(&self) -> u32 { (self.end_offset() / SECTOR_SIZE as u64) as u32 }
+
+    pub fn contains(&self, sector: u32) -> bool {
+        sector >= self.start_sector() && sector < self.end_sector()
+    }
+}
+
 /// This struct points directly to the actual disc data, stored compressed.
 ///
 /// The data is interpreted differently depending on whether the [WIAGroup] is referenced by a
@@ -360,8 +379,8 @@ impl RVZGroup {
     pub fn is_compressed(&self) -> bool { self.data_size_and_flag.get() & 0x80000000 != 0 }
 }
 
-impl From<WIAGroup> for RVZGroup {
-    fn from(value: WIAGroup) -> Self {
+impl From<&WIAGroup> for RVZGroup {
+    fn from(value: &WIAGroup) -> Self {
         Self {
             data_offset: value.data_offset,
             data_size_and_flag: U32::new(value.data_size.get() | 0x80000000),
@@ -428,31 +447,32 @@ pub struct WIAException {
 /// end offset of the last [WIAExceptionList] is not evenly divisible by 4, padding is inserted
 /// after it so that the data afterwards will start at a 4 byte boundary. This padding is not
 /// inserted for the other compression methods.
-type WIAExceptionList = Vec<WIAException>;
+type WIAExceptionList = Box<[WIAException]>;
 
+#[derive(Clone)]
 pub enum Decompressor {
     None,
     #[cfg(feature = "compress-bzip2")]
     Bzip2,
     #[cfg(feature = "compress-lzma")]
-    Lzma(liblzma::stream::LzmaOptions),
+    Lzma(Box<[u8]>),
     #[cfg(feature = "compress-lzma")]
-    Lzma2(liblzma::stream::LzmaOptions),
+    Lzma2(Box<[u8]>),
     #[cfg(feature = "compress-zstd")]
     Zstandard,
 }
 
 impl Decompressor {
     pub fn new(disc: &WIADisc) -> Result<Self> {
-        let compr_data = &disc.compr_data[..disc.compr_data_len as usize];
+        let data = &disc.compr_data[..disc.compr_data_len as usize];
         match disc.compression() {
             Compression::None => Ok(Self::None),
             #[cfg(feature = "compress-bzip2")]
             Compression::Bzip2 => Ok(Self::Bzip2),
             #[cfg(feature = "compress-lzma")]
-            Compression::Lzma => Ok(Self::Lzma(lzma_props_decode(compr_data)?)),
+            Compression::Lzma => Ok(Self::Lzma(Box::from(data))),
             #[cfg(feature = "compress-lzma")]
-            Compression::Lzma2 => Ok(Self::Lzma2(lzma2_props_decode(compr_data)?)),
+            Compression::Lzma2 => Ok(Self::Lzma2(Box::from(data))),
             #[cfg(feature = "compress-zstd")]
             Compression::Zstandard => Ok(Self::Zstandard),
             comp => Err(Error::DiscFormat(format!("Unsupported WIA/RVZ compression: {:?}", comp))),
@@ -466,86 +486,51 @@ impl Decompressor {
             #[cfg(feature = "compress-bzip2")]
             Decompressor::Bzip2 => Box::new(bzip2::read::BzDecoder::new(reader)),
             #[cfg(feature = "compress-lzma")]
-            Decompressor::Lzma(options) => Box::new(new_lzma_decoder(reader, options)?),
+            Decompressor::Lzma(data) => {
+                let options = lzma_props_decode(data)?;
+                Box::new(new_lzma_decoder(reader, &options)?)
+            }
             #[cfg(feature = "compress-lzma")]
-            Decompressor::Lzma2(options) => Box::new(new_lzma2_decoder(reader, options)?),
+            Decompressor::Lzma2(data) => {
+                let options = lzma2_props_decode(data)?;
+                Box::new(new_lzma2_decoder(reader, &options)?)
+            }
             #[cfg(feature = "compress-zstd")]
             Decompressor::Zstandard => Box::new(zstd::stream::Decoder::new(reader)?),
         })
     }
 }
 
-/// In a sector, following the 0x400 byte block of hashes, each 0x400 bytes of decrypted data is
-/// hashed, yielding 31 H0 hashes.
-/// Then, 8 sectors are aggregated into a subgroup, and the 31 H0 hashes for each sector are hashed,
-/// yielding 8 H1 hashes.
-/// Then, 8 subgroups are aggregated into a group, and the 8 H1 hashes for each subgroup are hashed,
-/// yielding 8 H2 hashes.
-/// Finally, the 8 H2 hashes for each group are hashed, yielding 1 H3 hash.
-/// The H3 hashes for each group are stored in the partition's H3 table.
-pub struct HashTable {
-    /// SHA-1 hash of the 31 H0 hashes for each sector.
-    pub h1_hashes: Vec<HashBytes>,
-    /// SHA-1 hash of the 8 H1 hashes for each subgroup.
-    pub h2_hashes: Vec<HashBytes>,
-    /// SHA-1 hash of the 8 H2 hashes for each group.
-    pub h3_hashes: Vec<HashBytes>,
+pub struct DiscIOWIA {
+    inner: SplitFileReader,
+    header: WIAFileHeader,
+    disc: WIADisc,
+    partitions: Box<[WIAPartition]>,
+    raw_data: Box<[WIARawData]>,
+    groups: Box<[RVZGroup]>,
+    nkit_header: Option<NKitHeader>,
+    decompressor: Decompressor,
+    group: u32,
+    group_data: Vec<u8>,
+    exception_lists: Vec<WIAExceptionList>,
 }
 
-struct HashResult {
-    h1_hashes: [HashBytes; 64],
-    h2_hashes: [HashBytes; 8],
-    h3_hash: HashBytes,
-}
-
-impl HashTable {
-    fn new(num_sectors: u32) -> Self {
-        let num_sectors = num_sectors.next_multiple_of(64) as usize;
-        let num_subgroups = num_sectors / 8;
-        let num_groups = num_subgroups / 8;
+impl Clone for DiscIOWIA {
+    fn clone(&self) -> Self {
         Self {
-            h1_hashes: HashBytes::new_vec_zeroed(num_sectors),
-            h2_hashes: HashBytes::new_vec_zeroed(num_subgroups),
-            h3_hashes: HashBytes::new_vec_zeroed(num_groups),
+            header: self.header.clone(),
+            disc: self.disc.clone(),
+            partitions: self.partitions.clone(),
+            raw_data: self.raw_data.clone(),
+            groups: self.groups.clone(),
+            inner: self.inner.clone(),
+            nkit_header: self.nkit_header.clone(),
+            decompressor: self.decompressor.clone(),
+            group: u32::MAX,
+            group_data: Vec::new(),
+            exception_lists: Vec::new(),
         }
     }
-
-    fn extend(&mut self, group_index: usize, result: &HashResult) {
-        let h1_start = group_index * 64;
-        self.h1_hashes[h1_start..h1_start + 64].copy_from_slice(&result.h1_hashes);
-        let h2_start = group_index * 8;
-        self.h2_hashes[h2_start..h2_start + 8].copy_from_slice(&result.h2_hashes);
-        self.h3_hashes[group_index] = result.h3_hash;
-    }
-}
-
-pub struct DiscIOWIA {
-    pub header: WIAFileHeader,
-    pub disc: WIADisc,
-    pub partitions: Vec<WIAPartition>,
-    pub raw_data: Vec<WIARawData>,
-    pub groups: Vec<RVZGroup>,
-    pub filename: PathBuf,
-    pub encrypt: bool,
-    pub hash_tables: Vec<HashTable>,
-    pub nkit_header: Option<NKitHeader>,
-}
-
-#[derive(Debug)]
-struct GroupResult {
-    /// Offset of the group in the raw disc image.
-    disc_offset: u64,
-    /// Data offset of the group within a partition, excluding hashes.
-    /// Same as `disc_offset` for raw data or GameCube discs.
-    partition_offset: u64,
-    /// The group.
-    group: RVZGroup,
-    /// The index of the Wii partition that this group belongs to.
-    partition_index: Option<usize>,
-    /// Chunk size, differs between Wii and raw data.
-    chunk_size: u32,
-    /// End offset for the partition or raw data.
-    partition_end: u64,
 }
 
 #[inline]
@@ -571,296 +556,127 @@ fn verify_hash(buf: &[u8], expected: &HashBytes) -> Result<()> {
 }
 
 impl DiscIOWIA {
-    pub fn new(filename: &Path, options: &OpenOptions) -> Result<Self> {
-        let mut file = BufReader::new(
-            File::open(filename).with_context(|| format!("Opening file {}", filename.display()))?,
-        );
+    pub fn new(filename: &Path, _options: &OpenOptions) -> Result<Box<Self>> {
+        let mut inner = SplitFileReader::new(filename)?;
 
         // Load & verify file header
-        let header: WIAFileHeader = read_from(&mut file).context("Reading WIA/RVZ file header")?;
+        let header: WIAFileHeader = read_from(&mut inner).context("Reading WIA/RVZ file header")?;
         header.validate()?;
         let is_rvz = header.is_rvz();
         // log::debug!("Header: {:?}", header);
 
         // Load & verify disc header
-        let mut disc_buf: Vec<u8> = read_vec(&mut file, header.disc_size.get() as usize)
+        let mut disc_buf: Vec<u8> = read_vec(&mut inner, header.disc_size.get() as usize)
             .context("Reading WIA/RVZ disc header")?;
         verify_hash(&disc_buf, &header.disc_hash)?;
         disc_buf.resize(size_of::<WIADisc>(), 0);
-        let mut disc = WIADisc::read_from(disc_buf.as_slice()).unwrap();
+        let disc = WIADisc::read_from(disc_buf.as_slice()).unwrap();
         disc.validate()?;
-        if !options.rebuild_encryption {
-            // If we're not re-encrypting, disable partition encryption in disc header
-            disc.disc_head[0x61] = 1;
-        }
+        // if !options.rebuild_hashes {
+        //     // If we're not rebuilding hashes, disable partition hashes in disc header
+        //     disc.disc_head[0x60] = 1;
+        // }
+        // if !options.rebuild_encryption {
+        //     // If we're not re-encrypting, disable partition encryption in disc header
+        //     disc.disc_head[0x61] = 1;
+        // }
         // log::debug!("Disc: {:?}", disc);
 
         // Read NKit header if present (after disc header)
-        let nkit_header = NKitHeader::try_read_from(&mut file);
+        let nkit_header = NKitHeader::try_read_from(&mut inner, disc.chunk_size.get(), false);
 
         // Load & verify partition headers
-        file.seek(SeekFrom::Start(disc.partition_offset.get()))
+        inner
+            .seek(SeekFrom::Start(disc.partition_offset.get()))
             .context("Seeking to WIA/RVZ partition headers")?;
-        let partitions: Vec<WIAPartition> = read_vec(&mut file, disc.num_partitions.get() as usize)
-            .context("Reading WIA/RVZ partition headers")?;
-        verify_hash(partitions.as_slice().as_bytes(), &disc.partition_hash)?;
+        let partitions: Box<[WIAPartition]> =
+            read_box_slice(&mut inner, disc.num_partitions.get() as usize)
+                .context("Reading WIA/RVZ partition headers")?;
+        verify_hash(partitions.as_ref().as_bytes(), &disc.partition_hash)?;
         // log::debug!("Partitions: {:?}", partitions);
 
         // Create decompressor
         let mut decompressor = Decompressor::new(&disc)?;
 
         // Load raw data headers
-        let raw_data: Vec<WIARawData> = {
-            file.seek(SeekFrom::Start(disc.raw_data_offset.get()))
+        let raw_data: Box<[WIARawData]> = {
+            inner
+                .seek(SeekFrom::Start(disc.raw_data_offset.get()))
                 .context("Seeking to WIA/RVZ raw data headers")?;
             let mut reader = decompressor
-                .wrap((&mut file).take(disc.raw_data_size.get() as u64))
+                .wrap((&mut inner).take(disc.raw_data_size.get() as u64))
                 .context("Creating WIA/RVZ decompressor")?;
-            read_vec(&mut reader, disc.num_raw_data.get() as usize)
+            read_box_slice(&mut reader, disc.num_raw_data.get() as usize)
                 .context("Reading WIA/RVZ raw data headers")?
         };
+        // Validate raw data alignment
+        for (idx, rd) in raw_data.iter().enumerate() {
+            let start_offset = rd.start_offset();
+            let end_offset = rd.end_offset();
+            if (start_offset % SECTOR_SIZE as u64) != 0 || (end_offset % SECTOR_SIZE as u64) != 0 {
+                return Err(Error::DiscFormat(format!(
+                    "WIA/RVZ raw data {} not aligned to sector: {:#X}..{:#X}",
+                    idx, start_offset, end_offset
+                )));
+            }
+        }
         // log::debug!("Raw data: {:?}", raw_data);
 
         // Load group headers
         let groups = {
-            file.seek(SeekFrom::Start(disc.group_offset.get()))
+            inner
+                .seek(SeekFrom::Start(disc.group_offset.get()))
                 .context("Seeking to WIA/RVZ group headers")?;
             let mut reader = decompressor
-                .wrap((&mut file).take(disc.group_size.get() as u64))
+                .wrap((&mut inner).take(disc.group_size.get() as u64))
                 .context("Creating WIA/RVZ decompressor")?;
             if is_rvz {
-                read_vec(&mut reader, disc.num_groups.get() as usize)
+                read_box_slice(&mut reader, disc.num_groups.get() as usize)
                     .context("Reading WIA/RVZ group headers")?
             } else {
-                let wia_groups: Vec<WIAGroup> =
-                    read_vec(&mut reader, disc.num_groups.get() as usize)
+                let wia_groups: Box<[WIAGroup]> =
+                    read_box_slice(&mut reader, disc.num_groups.get() as usize)
                         .context("Reading WIA/RVZ group headers")?;
-                wia_groups.into_iter().map(RVZGroup::from).collect()
+                wia_groups.iter().map(RVZGroup::from).collect()
             }
             // log::debug!("Groups: {:?}", groups);
         };
 
-        let mut disc_io = Self {
+        Ok(Box::new(Self {
             header,
             disc,
             partitions,
             raw_data,
             groups,
-            filename: filename.to_owned(),
-            encrypt: options.rebuild_encryption,
-            hash_tables: vec![],
+            inner,
             nkit_header,
-        };
-        if options.rebuild_hashes {
-            disc_io.rebuild_hashes()?;
-        }
-        Ok(disc_io)
+            decompressor,
+            group: u32::MAX,
+            group_data: vec![],
+            exception_lists: vec![],
+        }))
     }
-
-    fn group_for_offset(&self, offset: u64) -> Option<GroupResult> {
-        if let Some((p_idx, pd)) = self.partitions.iter().enumerate().find_map(|(p_idx, p)| {
-            p.partition_data
-                .iter()
-                .find(|pd| {
-                    let start = pd.first_sector.get() as u64 * SECTOR_SIZE as u64;
-                    let end = start + pd.num_sectors.get() as u64 * SECTOR_SIZE as u64;
-                    offset >= start && offset < end
-                })
-                .map(|pd| (p_idx, pd))
-        }) {
-            let start = pd.first_sector.get() as u64 * SECTOR_SIZE as u64;
-            let group_index = (offset - start) / self.disc.chunk_size.get() as u64;
-            if group_index >= pd.num_groups.get() as u64 {
-                return None;
-            }
-            let disc_offset = start + group_index * self.disc.chunk_size.get() as u64;
-            let chunk_size =
-                (self.disc.chunk_size.get() as u64 * BLOCK_SIZE as u64) / SECTOR_SIZE as u64;
-            let partition_offset = group_index * chunk_size;
-            let partition_end = pd.num_sectors.get() as u64 * BLOCK_SIZE as u64;
-            self.groups.get(pd.group_index.get() as usize + group_index as usize).map(|g| {
-                GroupResult {
-                    disc_offset,
-                    partition_offset,
-                    group: g.clone(),
-                    partition_index: Some(p_idx),
-                    chunk_size: chunk_size as u32,
-                    partition_end,
-                }
-            })
-        } else if let Some(d) = self.raw_data.iter().find(|d| {
-            let start = d.raw_data_offset.get() & !0x7FFF;
-            let end = d.raw_data_offset.get() + d.raw_data_size.get();
-            offset >= start && offset < end
-        }) {
-            let start = d.raw_data_offset.get() & !0x7FFF;
-            let end = d.raw_data_offset.get() + d.raw_data_size.get();
-            let group_index = (offset - start) / self.disc.chunk_size.get() as u64;
-            if group_index >= d.num_groups.get() as u64 {
-                return None;
-            }
-            let disc_offset = start + group_index * self.disc.chunk_size.get() as u64;
-            self.groups.get(d.group_index.get() as usize + group_index as usize).map(|g| {
-                GroupResult {
-                    disc_offset,
-                    partition_offset: disc_offset,
-                    group: g.clone(),
-                    partition_index: None,
-                    chunk_size: self.disc.chunk_size.get(),
-                    partition_end: end,
-                }
-            })
-        } else {
-            None
-        }
-    }
-
-    pub fn rebuild_hashes(&mut self) -> Result<()> {
-        const NUM_H0_HASHES: usize = BLOCK_SIZE / HASHES_SIZE;
-        const H0_HASHES_SIZE: usize = size_of::<HashBytes>() * NUM_H0_HASHES;
-
-        let start = Instant::now();
-
-        // Precompute hashes for zeroed sectors.
-        const ZERO_H0_BYTES: &[u8] = &[0u8; HASHES_SIZE];
-        let zero_h0_hash = hash_bytes(ZERO_H0_BYTES);
-        let mut zero_h1_hash = Sha1::new();
-        for _ in 0..NUM_H0_HASHES {
-            zero_h1_hash.update(zero_h0_hash);
-        }
-        let zero_h1_hash: HashBytes = zero_h1_hash.finalize().into();
-
-        let mut hash_tables = Vec::with_capacity(self.partitions.len());
-        for part in &self.partitions {
-            let first_sector = part.partition_data[0].first_sector.get();
-            if first_sector + part.partition_data[0].num_sectors.get()
-                != part.partition_data[1].first_sector.get()
-            {
-                return Err(Error::DiscFormat(format!(
-                    "Partition data is not contiguous: {}..{} != {}",
-                    first_sector,
-                    first_sector + part.partition_data[0].num_sectors.get(),
-                    part.partition_data[1].first_sector.get()
-                )));
-            }
-
-            let part_sectors =
-                part.partition_data[0].num_sectors.get() + part.partition_data[1].num_sectors.get();
-            let hash_table = HashTable::new(part_sectors);
-            log::debug!(
-                "Rebuilding hashes: {} sectors, {} subgroups, {} groups",
-                hash_table.h1_hashes.len(),
-                hash_table.h2_hashes.len(),
-                hash_table.h3_hashes.len()
-            );
-
-            let group_count = hash_table.h3_hashes.len();
-            let mutex = Arc::new(Mutex::new(hash_table));
-            (0..group_count).into_par_iter().try_for_each_init(
-                || (WIAReadStream::new(self, false), mutex.clone()),
-                |(stream, mutex), h3_index| -> Result<()> {
-                    let stream = stream.as_mut().map_err(|_| {
-                        Error::DiscFormat("Failed to create read stream".to_string())
-                    })?;
-                    let mut result = HashResult {
-                        h1_hashes: [HashBytes::default(); 64],
-                        h2_hashes: [HashBytes::default(); 8],
-                        h3_hash: HashBytes::default(),
-                    };
-                    let mut h0_buf = [0u8; H0_HASHES_SIZE];
-                    let mut h3_hasher = Sha1::new();
-                    for h2_index in 0..8 {
-                        let mut h2_hasher = Sha1::new();
-                        for h1_index in 0..8 {
-                            let part_sector =
-                                h1_index as u32 + h2_index as u32 * 8 + h3_index as u32 * 64;
-                            let h1_hash = if part_sector >= part_sectors {
-                                zero_h1_hash
-                            } else {
-                                let sector = first_sector + part_sector;
-                                stream
-                                    .seek(SeekFrom::Start(sector as u64 * SECTOR_SIZE as u64))
-                                    .with_context(|| format!("Seeking to sector {}", sector))?;
-                                stream
-                                    .read_exact(&mut h0_buf)
-                                    .with_context(|| format!("Reading sector {}", sector))?;
-                                hash_bytes(&h0_buf)
-                            };
-                            result.h1_hashes[h1_index + h2_index * 8] = h1_hash;
-                            h2_hasher.update(h1_hash);
-                        }
-                        let h2_hash = h2_hasher.finalize().into();
-                        result.h2_hashes[h2_index] = h2_hash;
-                        h3_hasher.update(h2_hash);
-                    }
-                    result.h3_hash = h3_hasher.finalize().into();
-                    let mut hash_table = mutex.lock().map_err(|_| "Failed to lock mutex")?;
-                    hash_table.extend(h3_index, &result);
-                    Ok(())
-                },
-            )?;
-
-            let hash_table = Arc::try_unwrap(mutex)
-                .map_err(|_| "Failed to unwrap Arc")?
-                .into_inner()
-                .map_err(|_| "Failed to lock mutex")?;
-            hash_tables.push(hash_table);
-        }
-        self.hash_tables = hash_tables;
-        log::info!("Rebuilt hashes in {:?}", start.elapsed());
-        Ok(())
-    }
-}
-
-impl DiscIO for DiscIOWIA {
-    fn open(&self) -> Result<Box<dyn ReadStream + '_>> {
-        Ok(Box::new(WIAReadStream::new(self, self.encrypt)?))
-    }
-
-    fn meta(&self) -> Result<DiscMeta> {
-        Ok(self.nkit_header.as_ref().map(DiscMeta::from).unwrap_or_default())
-    }
-
-    fn disc_size(&self) -> Option<u64> { Some(self.header.iso_file_size.get()) }
-}
-
-pub struct WIAReadStream<'a> {
-    /// The disc IO.
-    disc_io: &'a DiscIOWIA,
-    /// The currently open file handle.
-    file: BufReader<File>,
-    /// The data read offset.
-    offset: u64,
-    /// The data offset of the current group.
-    group_offset: u64,
-    /// The current group data.
-    group_data: Vec<u8>,
-    /// Exception lists for the current group.
-    exception_lists: Vec<WIAExceptionList>,
-    /// The decompressor data.
-    decompressor: Decompressor,
-    /// Whether to re-encrypt Wii partition data.
-    encrypt: bool,
 }
 
 fn read_exception_lists<R>(
     reader: &mut R,
-    partition_index: Option<usize>,
+    in_partition: bool,
     chunk_size: u32,
 ) -> io::Result<Vec<WIAExceptionList>>
 where
     R: Read + ?Sized,
 {
-    if partition_index.is_none() {
+    if !in_partition {
         return Ok(vec![]);
     }
 
+    // One exception list for each 2 MiB of data
     let num_exception_list = (chunk_size as usize).div_ceil(0x200000);
     // log::debug!("Num exception list: {:?}", num_exception_list);
     let mut exception_lists = Vec::with_capacity(num_exception_list);
     for i in 0..num_exception_list {
         let num_exceptions = read_u16_be(reader)?;
-        let exceptions: Vec<WIAException> = read_vec(reader, num_exceptions as usize)?;
+        let exceptions: Box<[WIAException]> = read_box_slice(reader, num_exceptions as usize)?;
         if !exceptions.is_empty() {
             log::debug!("Exception list {}: {:?}", i, exceptions);
         }
@@ -869,244 +685,218 @@ where
     Ok(exception_lists)
 }
 
-impl<'a> WIAReadStream<'a> {
-    pub fn new(disc_io: &'a DiscIOWIA, encrypt: bool) -> Result<Self> {
-        let file = BufReader::new(
-            File::open(&disc_io.filename)
-                .with_context(|| format!("Opening file {}", disc_io.filename.display()))?,
-        );
-        let decompressor = Decompressor::new(&disc_io.disc)?;
-        let stream = Self {
-            disc_io,
-            file,
-            offset: 0,
-            group_offset: u64::MAX,
-            group_data: Vec::new(),
-            exception_lists: vec![],
-            decompressor,
-            encrypt,
-        };
-        Ok(stream)
-    }
+impl BlockIO for DiscIOWIA {
+    fn read_block(
+        &mut self,
+        out: &mut [u8],
+        sector: u32,
+        partition: Option<&BPartitionInfo>,
+    ) -> io::Result<Option<Block>> {
+        let mut chunk_size = self.disc.chunk_size.get();
+        let sectors_per_chunk = chunk_size / SECTOR_SIZE as u32;
+        let disc_offset = sector as u64 * SECTOR_SIZE as u64;
+        let mut partition_offset = disc_offset;
+        if let Some(partition) = partition {
+            // Within a partition, hashes are excluded from the data size
+            chunk_size = (chunk_size * SECTOR_DATA_SIZE as u32) / SECTOR_SIZE as u32;
+            partition_offset =
+                (sector - partition.data_start_sector) as u64 * SECTOR_DATA_SIZE as u64;
+        }
 
-    /// If the current group does not contain the current offset, load the new group.
-    /// Returns false if the offset is not in the disc.
-    fn check_group(&mut self) -> io::Result<bool> {
-        if self.offset < self.group_offset
-            || self.offset >= self.group_offset + self.group_data.len() as u64
-        {
-            let Some(result) = self.disc_io.group_for_offset(self.offset) else {
-                return Ok(false);
-            };
-            if result.disc_offset == self.group_offset {
+        let (group_index, group_sector) = if let Some(partition) = partition {
+            // Find the partition
+            let Some(wia_part) = self.partitions.get(partition.index as usize) else {
                 return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Group offset did not change",
+                    io::ErrorKind::InvalidInput,
+                    format!("Couldn't find WIA/RVZ partition index {}", partition.index),
+                ));
+            };
+
+            // Sanity check partition sector ranges
+            let wia_part_start = wia_part.partition_data[0].first_sector.get();
+            let wia_part_end = wia_part.partition_data[1].first_sector.get()
+                + wia_part.partition_data[1].num_sectors.get();
+            if partition.data_start_sector != wia_part_start
+                || partition.data_end_sector != wia_part_end
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "WIA/RVZ partition sector mismatch: {}..{} != {}..{}",
+                        wia_part_start,
+                        wia_part_end,
+                        partition.data_start_sector,
+                        partition.data_end_sector
+                    ),
                 ));
             }
-            self.group_offset = result.disc_offset;
-            self.read_group(result)?;
-        }
-        Ok(true)
-    }
 
-    /// Reads new group data into the buffer, handling decompression and RVZ packing.
-    fn read_group(&mut self, result: GroupResult) -> io::Result<()> {
-        // Special case for all-zero data
-        if result.group.data_size() == 0 {
-            self.exception_lists.clear();
-            let size = min(result.chunk_size as u64, result.partition_end - result.partition_offset)
-                as usize;
-            self.group_data = vec![0u8; size];
-            self.recalculate_hashes(result)?;
-            return Ok(());
-        }
+            // Find the partition data for the sector
+            let Some(pd) = wia_part.partition_data.iter().find(|pd| pd.contains(sector)) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Couldn't find WIA/RVZ partition data for sector {}", sector),
+                ));
+            };
 
-        self.group_data = Vec::with_capacity(result.chunk_size as usize);
-        let group_data_start = result.group.data_offset.get() as u64 * 4;
-        self.file.seek(SeekFrom::Start(group_data_start))?;
-
-        let mut reader = (&mut self.file).take_seek(result.group.data_size() as u64);
-        let uncompressed_exception_lists =
-            matches!(self.disc_io.disc.compression(), Compression::None | Compression::Purge)
-                || !result.group.is_compressed();
-        if uncompressed_exception_lists {
-            self.exception_lists = read_exception_lists(
-                &mut reader,
-                result.partition_index,
-                self.disc_io.disc.chunk_size.get(), // result.chunk_size?
-            )?;
-            // Align to 4
-            let rem = reader.stream_position()? % 4;
-            if rem != 0 {
-                reader.seek(SeekFrom::Current((4 - rem) as i64))?;
+            // Find the group index for the sector
+            let part_data_sector = sector - pd.first_sector.get();
+            let part_group_index = part_data_sector / sectors_per_chunk;
+            let part_group_sector = part_data_sector % sectors_per_chunk;
+            if part_group_index >= pd.num_groups.get() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "WIA/RVZ partition group index out of range: {} >= {}",
+                        part_group_index,
+                        pd.num_groups.get()
+                    ),
+                ));
             }
-        }
-        let mut reader: Box<dyn Read> = if result.group.is_compressed() {
-            self.decompressor.wrap(reader)?
+
+            (pd.group_index.get() + part_group_index, part_group_sector)
         } else {
-            Box::new(reader)
+            let Some(rd) = self.raw_data.iter().find(|d| d.contains(sector)) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Couldn't find WIA/RVZ raw data for sector {}", sector),
+                ));
+            };
+
+            // Find the group index for the sector
+            let data_sector = sector - (rd.raw_data_offset.get() / SECTOR_SIZE as u64) as u32;
+            let group_index = data_sector / sectors_per_chunk;
+            let group_sector = data_sector % sectors_per_chunk;
+            if group_index >= rd.num_groups.get() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "WIA/RVZ raw data group index out of range: {} >= {}",
+                        group_index,
+                        rd.num_groups.get()
+                    ),
+                ));
+            }
+
+            (rd.group_index.get() + group_index, group_sector)
         };
-        if !uncompressed_exception_lists {
-            self.exception_lists = read_exception_lists(
-                reader.as_mut(),
-                result.partition_index,
-                self.disc_io.disc.chunk_size.get(), // result.chunk_size?
-            )?;
+
+        // Fetch the group
+        let Some(group) = self.groups.get(group_index as usize) else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Couldn't find WIA/RVZ group index {}", group_index),
+            ));
+        };
+
+        // Special case for all-zero data
+        if group.data_size() == 0 {
+            self.exception_lists.clear();
+            return Ok(Some(Block::Zero));
         }
 
-        if result.group.rvz_packed_size.get() > 0 {
-            // Decode RVZ packed data
-            let mut lfg = LaggedFibonacci::default();
-            loop {
-                let mut size_bytes = [0u8; 4];
-                match reader.read_exact(&mut size_bytes) {
-                    Ok(_) => {}
-                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                    Err(e) => {
-                        return Err(io::Error::new(e.kind(), "Failed to read RVZ packed size"));
+        // Read group data if necessary
+        if group_index != self.group {
+            self.group_data = Vec::with_capacity(chunk_size as usize);
+            let group_data_start = group.data_offset.get() as u64 * 4;
+            self.inner.seek(SeekFrom::Start(group_data_start))?;
+
+            let mut reader = (&mut self.inner).take_seek(group.data_size() as u64);
+            let uncompressed_exception_lists =
+                matches!(self.disc.compression(), Compression::None | Compression::Purge)
+                    || !group.is_compressed();
+            if uncompressed_exception_lists {
+                self.exception_lists = read_exception_lists(
+                    &mut reader,
+                    partition.is_some(),
+                    self.disc.chunk_size.get(),
+                )?;
+                // Align to 4
+                let rem = reader.stream_position()? % 4;
+                if rem != 0 {
+                    reader.seek(SeekFrom::Current((4 - rem) as i64))?;
+                }
+            }
+            let mut reader: Box<dyn Read> = if group.is_compressed() {
+                self.decompressor.wrap(reader)?
+            } else {
+                Box::new(reader)
+            };
+            if !uncompressed_exception_lists {
+                self.exception_lists = read_exception_lists(
+                    reader.as_mut(),
+                    partition.is_some(),
+                    self.disc.chunk_size.get(),
+                )?;
+            }
+
+            if group.rvz_packed_size.get() > 0 {
+                // Decode RVZ packed data
+                let mut lfg = LaggedFibonacci::default();
+                loop {
+                    let mut size_bytes = [0u8; 4];
+                    match reader.read_exact(&mut size_bytes) {
+                        Ok(_) => {}
+                        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                        Err(e) => {
+                            return Err(io::Error::new(e.kind(), "Failed to read RVZ packed size"));
+                        }
+                    }
+                    let size = u32::from_be_bytes(size_bytes);
+                    let cur_data_len = self.group_data.len();
+                    if size & 0x80000000 != 0 {
+                        // Junk data
+                        let size = size & 0x7FFFFFFF;
+                        lfg.init_with_reader(reader.as_mut())?;
+                        lfg.skip(
+                            ((partition_offset + cur_data_len as u64) % SECTOR_SIZE as u64)
+                                as usize,
+                        );
+                        self.group_data.resize(cur_data_len + size as usize, 0);
+                        lfg.fill(&mut self.group_data[cur_data_len..]);
+                    } else {
+                        // Real data
+                        self.group_data.resize(cur_data_len + size as usize, 0);
+                        reader.read_exact(&mut self.group_data[cur_data_len..])?;
                     }
                 }
-                let size = u32::from_be_bytes(size_bytes);
-                let cur_data_len = self.group_data.len();
-                if size & 0x80000000 != 0 {
-                    // Junk data
-                    let size = size & 0x7FFFFFFF;
-                    lfg.init_with_reader(reader.as_mut())?;
-                    lfg.skip(
-                        ((result.partition_offset + cur_data_len as u64) % SECTOR_SIZE as u64)
-                            as usize,
-                    );
-                    self.group_data.resize(cur_data_len + size as usize, 0);
-                    lfg.fill(&mut self.group_data[cur_data_len..]);
-                } else {
-                    // Real data
-                    self.group_data.resize(cur_data_len + size as usize, 0);
-                    reader.read_exact(&mut self.group_data[cur_data_len..])?;
-                }
+            } else {
+                // Read and decompress data
+                reader.read_to_end(&mut self.group_data)?;
             }
+
+            self.group = group_index;
+        }
+
+        // Read sector from cached group data
+        if partition.is_some() {
+            let sector_data_start = group_sector as usize * SECTOR_DATA_SIZE;
+            let sector_data =
+                &self.group_data[sector_data_start..sector_data_start + SECTOR_DATA_SIZE];
+            out[..HASHES_SIZE].fill(0);
+            out[HASHES_SIZE..SECTOR_SIZE].copy_from_slice(sector_data);
+            Ok(Some(Block::PartDecrypted { has_hashes: false }))
         } else {
-            // Read and decompress data
-            reader.read_to_end(&mut self.group_data)?;
-        }
-
-        drop(reader);
-        self.recalculate_hashes(result)?;
-        Ok(())
-    }
-
-    fn recalculate_hashes(&mut self, result: GroupResult) -> io::Result<()> {
-        let Some(partition_index) = result.partition_index else {
-            // Data not inside a Wii partition
-            return Ok(());
-        };
-        let hash_table = self.disc_io.hash_tables.get(partition_index);
-
-        if self.group_data.len() % BLOCK_SIZE != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Invalid group data size: {:#X}", self.group_data.len()),
-            ));
-        }
-
-        // WIA/RVZ excludes the hash data for each sector, instead storing all data contiguously.
-        // We need to add space for the hash data, and then recalculate the hashes.
-        let num_sectors = self.group_data.len() / BLOCK_SIZE;
-        let mut out = vec![0u8; num_sectors * SECTOR_SIZE];
-        for i in 0..num_sectors {
-            let data = array_ref![self.group_data, i * BLOCK_SIZE, BLOCK_SIZE];
-            let out = array_ref_mut![out, i * SECTOR_SIZE, SECTOR_SIZE];
-
-            // Rebuild H0 hashes
-            for n in 0..31 {
-                let hash = hash_bytes(array_ref![data, n * 0x400, 0x400]);
-                array_ref_mut![out, n * 20, 20].copy_from_slice(&hash);
-            }
-
-            // Copy data
-            array_ref_mut![out, 0x400, BLOCK_SIZE].copy_from_slice(data);
-
-            // Rebuild H1 and H2 hashes if available
-            if let Some(hash_table) = hash_table {
-                let partition = &self.disc_io.partitions[partition_index];
-                let part_sector = (result.disc_offset / SECTOR_SIZE as u64) as usize + i
-                    - partition.partition_data[0].first_sector.get() as usize;
-                let h1_start = part_sector & !7;
-                for i in 0..8 {
-                    array_ref_mut![out, 0x280 + i * 20, 20]
-                        .copy_from_slice(&hash_table.h1_hashes[h1_start + i]);
-                }
-                let h2_start = (h1_start / 8) & !7;
-                for i in 0..8 {
-                    array_ref_mut![out, 0x340 + i * 20, 20]
-                        .copy_from_slice(&hash_table.h2_hashes[h2_start + i]);
-                }
-
-                if self.encrypt {
-                    // Re-encrypt hashes and data
-                    aes_encrypt(&partition.partition_key, [0u8; 16], &mut out[..HASHES_SIZE]);
-                    let iv = *array_ref![out, 0x3d0, 16];
-                    aes_encrypt(&partition.partition_key, iv, &mut out[HASHES_SIZE..]);
-                }
-            }
-        }
-
-        self.group_data = out;
-        Ok(())
-    }
-}
-
-impl<'a> Read for WIAReadStream<'a> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut rem = buf.len();
-        let mut read: usize = 0;
-
-        // Special case: First 0x80 bytes are stored in the disc header
-        if self.offset < DISC_HEAD_SIZE as u64 {
-            let to_read = min(rem, DISC_HEAD_SIZE);
-            buf[read..read + to_read].copy_from_slice(
-                &self.disc_io.disc.disc_head[self.offset as usize..self.offset as usize + to_read],
+            let sector_data_start = group_sector as usize * SECTOR_SIZE;
+            out.copy_from_slice(
+                &self.group_data[sector_data_start..sector_data_start + SECTOR_SIZE],
             );
-            rem -= to_read;
-            read += to_read;
-            self.offset += to_read as u64;
+            Ok(Some(Block::Raw))
         }
-
-        // Decompress groups and read data
-        while rem > 0 {
-            if !self.check_group()? {
-                break;
-            }
-            let group_offset = (self.offset - self.group_offset) as usize;
-            let to_read = min(rem, self.group_data.len() - group_offset);
-            buf[read..read + to_read]
-                .copy_from_slice(&self.group_data[group_offset..group_offset + to_read]);
-            rem -= to_read;
-            read += to_read;
-            self.offset += to_read as u64;
-        }
-        Ok(read)
-    }
-}
-
-impl<'a> Seek for WIAReadStream<'a> {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        self.offset = match pos {
-            SeekFrom::Start(v) => v,
-            SeekFrom::End(v) => self.disc_io.header.iso_file_size.get().saturating_add_signed(v),
-            SeekFrom::Current(v) => self.offset.saturating_add_signed(v),
-        };
-        self.check_group()?;
-        Ok(self.offset)
     }
 
-    fn stream_position(&mut self) -> io::Result<u64> { Ok(self.offset) }
-}
-
-impl<'a> ReadStream for WIAReadStream<'a> {
-    fn stable_stream_len(&mut self) -> io::Result<u64> {
-        Ok(self.disc_io.header.iso_file_size.get())
+    fn block_size(&self) -> u32 {
+        // WIA/RVZ chunks aren't always the full size, so we'll consider the
+        // block size to be one sector, and handle the complexity ourselves.
+        SECTOR_SIZE as u32
     }
 
-    fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
+    fn meta(&self) -> Result<DiscMeta> {
+        let mut meta = self.nkit_header.as_ref().map(DiscMeta::from).unwrap_or_default();
+        meta.decrypted = true;
+        meta.needs_hash_recovery = true;
+        meta.lossless = true;
+        meta.disc_size = Some(self.header.iso_file_size.get());
+        Ok(meta)
+    }
 }

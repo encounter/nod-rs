@@ -1,25 +1,56 @@
-use std::{io::BufReader, path::Path};
-
-use crate::{
-    io::{split::SplitFileReader, DiscIO},
-    streams::ReadStream,
-    Result,
+use std::{
+    io,
+    io::{Read, Seek},
+    path::Path,
 };
 
+use crate::{
+    disc::SECTOR_SIZE,
+    io::{
+        block::{BPartitionInfo, Block, BlockIO},
+        split::SplitFileReader,
+    },
+    DiscMeta, Error, Result,
+};
+
+#[derive(Clone)]
 pub struct DiscIOISO {
-    pub inner: SplitFileReader,
+    inner: SplitFileReader,
 }
 
 impl DiscIOISO {
-    pub fn new(filename: &Path) -> Result<Self> {
-        Ok(Self { inner: SplitFileReader::new(filename)? })
+    pub fn new(filename: &Path) -> Result<Box<Self>> {
+        let inner = SplitFileReader::new(filename)?;
+        if inner.len() % SECTOR_SIZE as u64 != 0 {
+            return Err(Error::DiscFormat(
+                "ISO size is not a multiple of sector size (0x8000 bytes)".to_string(),
+            ));
+        }
+        Ok(Box::new(Self { inner }))
     }
 }
 
-impl DiscIO for DiscIOISO {
-    fn open(&self) -> Result<Box<dyn ReadStream>> {
-        Ok(Box::new(BufReader::new(self.inner.clone())))
+impl BlockIO for DiscIOISO {
+    fn read_block(
+        &mut self,
+        out: &mut [u8],
+        block: u32,
+        _partition: Option<&BPartitionInfo>,
+    ) -> io::Result<Option<Block>> {
+        let offset = block as u64 * SECTOR_SIZE as u64;
+        if offset >= self.inner.len() {
+            // End of file
+            return Ok(None);
+        }
+
+        self.inner.seek(io::SeekFrom::Start(offset))?;
+        self.inner.read_exact(out)?;
+        Ok(Some(Block::Raw))
     }
 
-    fn disc_size(&self) -> Option<u64> { Some(self.inner.len()) }
+    fn block_size(&self) -> u32 { SECTOR_SIZE as u32 }
+
+    fn meta(&self) -> Result<DiscMeta> {
+        Ok(DiscMeta { lossless: true, disc_size: Some(self.inner.len()), ..Default::default() })
+    }
 }

@@ -1,14 +1,15 @@
 use std::{io, io::Read};
 
-use crate::{Error, Result};
-
 /// Decodes the LZMA Properties byte (lc/lp/pb).
 /// See `lzma_lzma_lclppb_decode` in `liblzma/lzma/lzma_decoder.c`.
 #[cfg(feature = "compress-lzma")]
-pub fn lzma_lclppb_decode(options: &mut liblzma::stream::LzmaOptions, byte: u8) -> Result<()> {
+pub fn lzma_lclppb_decode(options: &mut liblzma::stream::LzmaOptions, byte: u8) -> io::Result<()> {
     let mut d = byte as u32;
     if d >= (9 * 5 * 5) {
-        return Err(Error::DiscFormat(format!("Invalid LZMA props byte: {}", d)));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Invalid LZMA props byte: {}", d),
+        ));
     }
     options.literal_context_bits(d % 9);
     d /= 9;
@@ -20,10 +21,13 @@ pub fn lzma_lclppb_decode(options: &mut liblzma::stream::LzmaOptions, byte: u8) 
 /// Decodes LZMA properties.
 /// See `lzma_lzma_props_decode` in `liblzma/lzma/lzma_decoder.c`.
 #[cfg(feature = "compress-lzma")]
-pub fn lzma_props_decode(props: &[u8]) -> Result<liblzma::stream::LzmaOptions> {
+pub fn lzma_props_decode(props: &[u8]) -> io::Result<liblzma::stream::LzmaOptions> {
     use crate::array_ref;
     if props.len() != 5 {
-        return Err(Error::DiscFormat(format!("Invalid LZMA props length: {}", props.len())));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Invalid LZMA props length: {}", props.len()),
+        ));
     }
     let mut options = liblzma::stream::LzmaOptions::new();
     lzma_lclppb_decode(&mut options, props[0])?;
@@ -34,16 +38,22 @@ pub fn lzma_props_decode(props: &[u8]) -> Result<liblzma::stream::LzmaOptions> {
 /// Decodes LZMA2 properties.
 /// See `lzma_lzma2_props_decode` in `liblzma/lzma/lzma2_decoder.c`.
 #[cfg(feature = "compress-lzma")]
-pub fn lzma2_props_decode(props: &[u8]) -> Result<liblzma::stream::LzmaOptions> {
+pub fn lzma2_props_decode(props: &[u8]) -> io::Result<liblzma::stream::LzmaOptions> {
     use std::cmp::Ordering;
     if props.len() != 1 {
-        return Err(Error::DiscFormat(format!("Invalid LZMA2 props length: {}", props.len())));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Invalid LZMA2 props length: {}", props.len()),
+        ));
     }
     let d = props[0] as u32;
     let mut options = liblzma::stream::LzmaOptions::new();
     options.dict_size(match d.cmp(&40) {
         Ordering::Greater => {
-            return Err(Error::DiscFormat(format!("Invalid LZMA2 props byte: {}", d)));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid LZMA2 props byte: {}", d),
+            ));
         }
         Ordering::Equal => u32::MAX,
         Ordering::Less => (2 | (d & 1)) << (d / 2 + 11),

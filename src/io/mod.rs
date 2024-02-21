@@ -1,11 +1,8 @@
 //! Disc file format related logic (CISO, NFS, WBFS, WIA, etc.)
 
-use std::{fs, fs::File, path::Path};
+use crate::{streams::ReadStream, Result};
 
-use crate::{
-    streams::ReadStream, util::reader::read_from, Error, OpenOptions, Result, ResultContext,
-};
-
+pub(crate) mod block;
 pub(crate) mod ciso;
 pub(crate) mod iso;
 pub(crate) mod nfs;
@@ -36,47 +33,25 @@ pub trait DiscIO: Send + Sync {
     fn disc_size(&self) -> Option<u64>;
 }
 
-/// Extra metadata included in some disc file formats.
+/// Extra metadata about the underlying disc file format.
 #[derive(Debug, Clone, Default)]
 pub struct DiscMeta {
+    /// Whether Wii partitions are stored decrypted in the format.
+    pub decrypted: bool,
+    /// Whether the format omits Wii partition data hashes.
+    pub needs_hash_recovery: bool,
+    /// Whether the format supports recovering the original disc data losslessly.
+    pub lossless: bool,
+    /// The original disc's size in bytes, if stored by the format.
+    pub disc_size: Option<u64>,
+    /// The original disc's CRC32 hash, if stored by the format.
     pub crc32: Option<u32>,
+    /// The original disc's MD5 hash, if stored by the format.
     pub md5: Option<[u8; 16]>,
+    /// The original disc's SHA-1 hash, if stored by the format.
     pub sha1: Option<[u8; 20]>,
+    /// The original disc's XXH64 hash, if stored by the format.
     pub xxhash64: Option<u64>,
-}
-
-/// Creates a new [`DiscIO`] instance.
-pub fn open(filename: &Path, options: &OpenOptions) -> Result<Box<dyn DiscIO>> {
-    let path_result = fs::canonicalize(filename);
-    if let Err(err) = path_result {
-        return Err(Error::Io(format!("Failed to open {}", filename.display()), err));
-    }
-    let path = path_result.as_ref().unwrap();
-    let meta = fs::metadata(path);
-    if let Err(err) = meta {
-        return Err(Error::Io(format!("Failed to open {}", filename.display()), err));
-    }
-    if !meta.unwrap().is_file() {
-        return Err(Error::DiscFormat(format!("Input is not a file: {}", filename.display())));
-    }
-    let magic: MagicBytes = {
-        let mut file =
-            File::open(path).with_context(|| format!("Opening file {}", filename.display()))?;
-        read_from(&mut file)
-            .with_context(|| format!("Reading magic bytes from {}", filename.display()))?
-    };
-    match magic {
-        ciso::CISO_MAGIC => Ok(Box::new(ciso::DiscIOCISO::new(path)?)),
-        nfs::NFS_MAGIC => match path.parent() {
-            Some(parent) if parent.is_dir() => {
-                Ok(Box::new(nfs::DiscIONFS::new(path.parent().unwrap(), options)?))
-            }
-            _ => Err(Error::DiscFormat("Failed to locate NFS parent directory".to_string())),
-        },
-        wbfs::WBFS_MAGIC => Ok(Box::new(wbfs::DiscIOWBFS::new(path)?)),
-        wia::WIA_MAGIC | wia::RVZ_MAGIC => Ok(Box::new(wia::DiscIOWIA::new(path, options)?)),
-        _ => Ok(Box::new(iso::DiscIOISO::new(path)?)),
-    }
 }
 
 /// Encrypts data in-place using AES-128-CBC with the given key and IV.

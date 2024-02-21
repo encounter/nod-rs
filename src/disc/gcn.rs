@@ -17,7 +17,7 @@ use crate::{
     streams::{ReadStream, SharedWindowedReadStream},
     util::{
         div_rem,
-        reader::{read_from, read_vec},
+        read::{read_box, read_box_slice, read_vec},
     },
     Error, OpenOptions, Result, ResultContext,
 };
@@ -25,7 +25,6 @@ use crate::{
 pub(crate) struct DiscGCN {
     pub(crate) header: DiscHeader,
     pub(crate) disc_size: u64,
-    // pub(crate) junk_start: u64,
 }
 
 impl DiscGCN {
@@ -34,10 +33,7 @@ impl DiscGCN {
         header: DiscHeader,
         disc_size: Option<u64>,
     ) -> Result<DiscGCN> {
-        // stream.seek(SeekFrom::Start(size_of::<DiscHeader>() as u64)).context("Seeking to partition header")?;
-        // let partition_header: PartitionHeader = read_from(stream).context("Reading partition header")?;
-        // let junk_start = partition_header.fst_off(false) + partition_header.fst_sz(false);
-        Ok(DiscGCN { header, disc_size: disc_size.unwrap_or(MINI_DVD_SIZE) /*, junk_start*/ })
+        Ok(DiscGCN { header, disc_size: disc_size.unwrap_or(MINI_DVD_SIZE) })
     }
 }
 
@@ -140,7 +136,12 @@ impl<'a> Seek for PartitionGC<'a> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         self.offset = match pos {
             SeekFrom::Start(v) => v,
-            SeekFrom::End(v) => self.stable_stream_len()?.saturating_add_signed(v),
+            SeekFrom::End(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "PartitionGC: SeekFrom::End is not supported",
+                ));
+            }
             SeekFrom::Current(v) => self.offset.saturating_add_signed(v),
         };
         let block = self.offset / SECTOR_SIZE as u64;
@@ -152,12 +153,6 @@ impl<'a> Seek for PartitionGC<'a> {
     }
 
     fn stream_position(&mut self) -> io::Result<u64> { Ok(self.offset) }
-}
-
-impl<'a> ReadStream for PartitionGC<'a> {
-    fn stable_stream_len(&mut self) -> io::Result<u64> { self.stream.stable_stream_len() }
-
-    fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
 }
 
 impl<'a> PartitionBase for PartitionGC<'a> {
@@ -177,11 +172,11 @@ impl<'a> PartitionBase for PartitionGC<'a> {
 pub(crate) fn read_part_header<R>(reader: &mut R, is_wii: bool) -> Result<Box<PartitionMeta>>
 where R: Read + Seek + ?Sized {
     // boot.bin
-    let raw_boot: [u8; BOOT_SIZE] = read_from(reader).context("Reading boot.bin")?;
+    let raw_boot: Box<[u8; BOOT_SIZE]> = read_box(reader).context("Reading boot.bin")?;
     let partition_header = PartitionHeader::ref_from(&raw_boot[size_of::<DiscHeader>()..]).unwrap();
 
     // bi2.bin
-    let raw_bi2: [u8; BI2_SIZE] = read_from(reader).context("Reading bi2.bin")?;
+    let raw_bi2: Box<[u8; BI2_SIZE]> = read_box(reader).context("Reading bi2.bin")?;
 
     // apploader.bin
     let mut raw_apploader: Vec<u8> =
@@ -201,7 +196,7 @@ where R: Read + Seek + ?Sized {
     reader
         .seek(SeekFrom::Start(partition_header.fst_off(is_wii)))
         .context("Seeking to FST offset")?;
-    let raw_fst: Vec<u8> = read_vec(reader, partition_header.fst_sz(is_wii) as usize)
+    let raw_fst: Box<[u8]> = read_box_slice(reader, partition_header.fst_sz(is_wii) as usize)
         .with_context(|| {
             format!(
                 "Reading partition FST (offset {}, size {})",
@@ -236,9 +231,9 @@ where R: Read + Seek + ?Sized {
     Ok(Box::new(PartitionMeta {
         raw_boot,
         raw_bi2,
-        raw_apploader,
+        raw_apploader: raw_apploader.into_boxed_slice(),
         raw_fst,
-        raw_dol,
+        raw_dol: raw_dol.into_boxed_slice(),
         raw_ticket: None,
         raw_tmd: None,
         raw_cert_chain: None,

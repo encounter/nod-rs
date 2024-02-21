@@ -25,6 +25,17 @@ where
 }
 
 #[inline(always)]
+pub fn read_box<T, R>(reader: &mut R) -> io::Result<Box<T>>
+where
+    T: FromBytes + FromZeroes + AsBytes,
+    R: Read + ?Sized,
+{
+    let mut ret = <T>::new_box_zeroed();
+    reader.read_exact(ret.as_mut().as_bytes_mut())?;
+    Ok(ret)
+}
+
+#[inline(always)]
 pub fn read_box_slice<T, R>(reader: &mut R, count: usize) -> io::Result<Box<[T]>>
 where
     T: FromBytes + FromZeroes + AsBytes,

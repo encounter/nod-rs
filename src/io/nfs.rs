@@ -9,16 +9,16 @@ use std::{
 use zerocopy::{big_endian::U32, AsBytes, FromBytes, FromZeroes};
 
 use crate::{
-    array_ref,
-    disc::{
-        wii::{read_partition_info, HASHES_SIZE},
-        SECTOR_SIZE,
+    disc::SECTOR_SIZE,
+    io::{
+        aes_decrypt,
+        block::{BPartitionInfo, Block, BlockIO},
+        split::SplitFileReader,
+        KeyBytes, MagicBytes,
     },
-    io::{aes_decrypt, aes_encrypt, split::SplitFileReader, DiscIO, KeyBytes, MagicBytes},
     static_assert,
-    streams::ReadStream,
-    util::reader::read_from,
-    DiscHeader, Error, OpenOptions, Result, ResultContext,
+    util::read::read_from,
+    DiscMeta, Error, OpenOptions, Result, ResultContext,
 };
 
 pub const NFS_MAGIC: MagicBytes = *b"EGGS";
@@ -26,27 +26,27 @@ pub const NFS_END_MAGIC: MagicBytes = *b"SGGE";
 
 #[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
-pub struct LBARange {
-    pub start_sector: U32,
-    pub num_sectors: U32,
+struct LBARange {
+    start_sector: U32,
+    num_sectors: U32,
 }
 
 #[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
-pub struct NFSHeader {
-    pub magic: MagicBytes,
-    pub version: U32,
-    pub unk1: U32,
-    pub unk2: U32,
-    pub num_lba_ranges: U32,
-    pub lba_ranges: [LBARange; 61],
-    pub end_magic: MagicBytes,
+struct NFSHeader {
+    magic: MagicBytes,
+    version: U32,
+    unk1: U32,
+    unk2: U32,
+    num_lba_ranges: U32,
+    lba_ranges: [LBARange; 61],
+    end_magic: MagicBytes,
 }
 
 static_assert!(size_of::<NFSHeader>() == 0x200);
 
 impl NFSHeader {
-    pub fn validate(&self) -> Result<()> {
+    fn validate(&self) -> Result<()> {
         if self.magic != NFS_MAGIC {
             return Err(Error::DiscFormat("Invalid NFS magic".to_string()));
         }
@@ -59,11 +59,9 @@ impl NFSHeader {
         Ok(())
     }
 
-    pub fn lba_ranges(&self) -> &[LBARange] {
-        &self.lba_ranges[..self.num_lba_ranges.get() as usize]
-    }
+    fn lba_ranges(&self) -> &[LBARange] { &self.lba_ranges[..self.num_lba_ranges.get() as usize] }
 
-    pub fn calculate_num_files(&self) -> u32 {
+    fn calculate_num_files(&self) -> u32 {
         let sector_count =
             self.lba_ranges().iter().fold(0u32, |acc, range| acc + range.num_sectors.get());
         (((sector_count as u64) * (SECTOR_SIZE as u64)
@@ -71,7 +69,7 @@ impl NFSHeader {
             / 0xFA00000u64) as u32
     }
 
-    pub fn phys_sector(&self, sector: u32) -> u32 {
+    fn phys_sector(&self, sector: u32) -> u32 {
         let mut cur_sector = 0u32;
         for range in self.lba_ranges().iter() {
             if sector >= range.start_sector.get()
@@ -86,190 +84,82 @@ impl NFSHeader {
 }
 
 pub struct DiscIONFS {
-    pub inner: SplitFileReader,
-    pub header: NFSHeader,
-    pub raw_size: u64,
-    pub disc_size: u64,
-    pub key: KeyBytes,
-    pub encrypt: bool,
+    inner: SplitFileReader,
+    header: NFSHeader,
+    raw_size: u64,
+    disc_size: u64,
+    key: KeyBytes,
+    encrypt: bool,
+}
+
+impl Clone for DiscIONFS {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            header: self.header.clone(),
+            raw_size: self.raw_size,
+            disc_size: self.disc_size,
+            key: self.key,
+            encrypt: self.encrypt,
+        }
+    }
 }
 
 impl DiscIONFS {
-    pub fn new(directory: &Path, options: &OpenOptions) -> Result<DiscIONFS> {
-        let mut disc_io = DiscIONFS {
+    pub fn new(directory: &Path, options: &OpenOptions) -> Result<Box<Self>> {
+        let mut disc_io = Box::new(Self {
             inner: SplitFileReader::empty(),
             header: NFSHeader::new_zeroed(),
             raw_size: 0,
             disc_size: 0,
             key: [0; 16],
             encrypt: options.rebuild_encryption,
-        };
+        });
         disc_io.load_files(directory)?;
         Ok(disc_io)
     }
 }
 
-pub struct NFSReadStream {
-    /// Underlying file reader
-    inner: SplitFileReader,
-    /// NFS file header
-    header: NFSHeader,
-    /// Inner disc header
-    disc_header: Option<DiscHeader>,
-    /// Estimated disc size
-    disc_size: u64,
-    /// Current offset
-    pos: u64,
-    /// Current sector
-    sector: u32,
-    /// Current decrypted sector
-    buf: [u8; SECTOR_SIZE],
-    /// AES key
-    key: KeyBytes,
-    /// Wii partition info
-    part_info: Vec<PartitionInfo>,
-}
-
-struct PartitionInfo {
-    start_sector: u32,
-    end_sector: u32,
-    key: KeyBytes,
-}
-
-impl NFSReadStream {
-    fn read_sector(&mut self, sector: u32) -> io::Result<()> {
+impl BlockIO for DiscIONFS {
+    fn read_block(
+        &mut self,
+        out: &mut [u8],
+        sector: u32,
+        partition: Option<&BPartitionInfo>,
+    ) -> io::Result<Option<Block>> {
         // Calculate physical sector
         let phys_sector = self.header.phys_sector(sector);
         if phys_sector == u32::MAX {
             // Logical zero sector
-            self.buf.fill(0u8);
-            return Ok(());
+            return Ok(Some(Block::Zero));
         }
 
         // Read sector
         let offset = size_of::<NFSHeader>() as u64 + phys_sector as u64 * SECTOR_SIZE as u64;
         self.inner.seek(SeekFrom::Start(offset))?;
-        self.inner.read_exact(&mut self.buf)?;
+        self.inner.read_exact(out)?;
 
         // Decrypt
         let iv_bytes = sector.to_be_bytes();
         #[rustfmt::skip]
-        let iv: KeyBytes = [
+            let iv: KeyBytes = [
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             iv_bytes[0], iv_bytes[1], iv_bytes[2], iv_bytes[3],
         ];
-        aes_decrypt(&self.key, iv, &mut self.buf);
+        aes_decrypt(&self.key, iv, out);
 
-        if sector == 0 {
-            if let Some(header) = &self.disc_header {
-                // Replace disc header in buffer
-                let header_bytes = header.as_bytes();
-                self.buf[..header_bytes.len()].copy_from_slice(header_bytes);
-            }
+        if partition.is_some() {
+            Ok(Some(Block::PartDecrypted { has_hashes: true }))
+        } else {
+            Ok(Some(Block::Raw))
         }
-
-        // Re-encrypt if needed
-        if let Some(part) = self
-            .part_info
-            .iter()
-            .find(|part| sector >= part.start_sector && sector < part.end_sector)
-        {
-            // Encrypt hashes
-            aes_encrypt(&part.key, [0u8; 16], &mut self.buf[..HASHES_SIZE]);
-            // Encrypt data using IV from H2
-            aes_encrypt(&part.key, *array_ref![self.buf, 0x3d0, 16], &mut self.buf[HASHES_SIZE..]);
-        }
-
-        Ok(())
-    }
-}
-
-impl Read for NFSReadStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let sector = (self.pos / SECTOR_SIZE as u64) as u32;
-        let sector_off = (self.pos % SECTOR_SIZE as u64) as usize;
-        if sector != self.sector {
-            self.read_sector(sector)?;
-            self.sector = sector;
-        }
-
-        let read = buf.len().min(SECTOR_SIZE - sector_off);
-        buf[..read].copy_from_slice(&self.buf[sector_off..sector_off + read]);
-        self.pos += read as u64;
-        Ok(read)
-    }
-}
-
-impl Seek for NFSReadStream {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        self.pos = match pos {
-            SeekFrom::Start(v) => v,
-            SeekFrom::End(_) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "NFSReadStream: SeekFrom::End is not supported",
-                ));
-            }
-            SeekFrom::Current(v) => self.pos.saturating_add_signed(v),
-        };
-        Ok(self.pos)
     }
 
-    fn stream_position(&mut self) -> io::Result<u64> { Ok(self.pos) }
-}
+    fn block_size(&self) -> u32 { SECTOR_SIZE as u32 }
 
-impl ReadStream for NFSReadStream {
-    fn stable_stream_len(&mut self) -> io::Result<u64> { Ok(self.disc_size) }
-
-    fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
-}
-
-impl DiscIO for DiscIONFS {
-    fn open(&self) -> Result<Box<dyn ReadStream>> {
-        let mut stream = NFSReadStream {
-            inner: self.inner.clone(),
-            header: self.header.clone(),
-            disc_header: None,
-            disc_size: self.disc_size,
-            pos: 0,
-            sector: u32::MAX,
-            buf: [0; SECTOR_SIZE],
-            key: self.key,
-            part_info: vec![],
-        };
-        let mut disc_header: DiscHeader = read_from(&mut stream).context("Reading disc header")?;
-        if !self.encrypt {
-            // If we're not re-encrypting, disable partition encryption in disc header
-            disc_header.no_partition_encryption = 1;
-        }
-
-        // Read partition info so we can re-encrypt
-        if self.encrypt && disc_header.is_wii() {
-            for part in read_partition_info(&mut stream)? {
-                let start = part.offset + part.header.data_off();
-                let end = start + part.header.data_size();
-                if start % SECTOR_SIZE as u64 != 0 || end % SECTOR_SIZE as u64 != 0 {
-                    return Err(Error::DiscFormat(format!(
-                        "Partition start / end not aligned to sector size: {} / {}",
-                        start, end
-                    )));
-                }
-                stream.part_info.push(PartitionInfo {
-                    start_sector: (start / SECTOR_SIZE as u64) as u32,
-                    end_sector: (end / SECTOR_SIZE as u64) as u32,
-                    key: part.header.ticket.title_key,
-                });
-            }
-        }
-
-        stream.disc_header = Some(disc_header);
-        // Reset stream position
-        stream.pos = 0;
-        stream.sector = u32::MAX;
-        Ok(Box::new(stream))
+    fn meta(&self) -> Result<DiscMeta> {
+        Ok(DiscMeta { decrypted: true, lossless: true, ..Default::default() })
     }
-
-    fn disc_size(&self) -> Option<u64> { None }
 }
 
 fn get_path<P>(directory: &Path, path: P) -> PathBuf

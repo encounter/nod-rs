@@ -1,16 +1,17 @@
 use std::{
+    cmp::min,
     fs::File,
     io,
-    io::{Read, Seek, SeekFrom},
+    io::{BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
-use crate::{ErrorContext, ReadStream, Result, ResultContext};
+use crate::{ErrorContext, Result, ResultContext};
 
 #[derive(Debug)]
 pub struct SplitFileReader {
     files: Vec<Split<PathBuf>>,
-    open_file: Option<Split<File>>,
+    open_file: Option<Split<BufReader<File>>>,
     pos: u64,
 }
 
@@ -108,30 +109,24 @@ impl SplitFileReader {
 }
 
 impl Read for SplitFileReader {
-    fn read(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
-        let mut total = 0;
-        while !buf.is_empty() {
-            if let Some(split) = &mut self.open_file {
-                let n = buf.len().min((split.begin + split.size - self.pos) as usize);
-                if n == 0 {
-                    self.open_file = None;
-                    continue;
-                }
-                split.inner.read_exact(&mut buf[..n])?;
-                total += n;
-                self.pos += n as u64;
-                buf = &mut buf[n..];
-            } else if let Some(split) = self.files.iter().find(|f| f.contains(self.pos)) {
-                let mut file = File::open(&split.inner)?;
-                if self.pos > split.begin {
-                    file.seek(SeekFrom::Start(self.pos - split.begin))?;
-                }
-                self.open_file = Some(Split { inner: file, begin: split.begin, size: split.size });
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.open_file.is_none() || !self.open_file.as_ref().unwrap().contains(self.pos) {
+            self.open_file = if let Some(split) = self.files.iter().find(|f| f.contains(self.pos)) {
+                let mut file = BufReader::new(File::open(&split.inner)?);
+                // log::info!("Opened file {} at pos {}", split.inner.display(), self.pos);
+                file.seek(SeekFrom::Start(self.pos - split.begin))?;
+                Some(Split { inner: file, begin: split.begin, size: split.size })
             } else {
-                break;
-            }
+                None
+            };
         }
-        Ok(total)
+        let Some(split) = self.open_file.as_mut() else {
+            return Ok(0);
+        };
+        let to_read = min(buf.len(), (split.begin + split.size - self.pos) as usize);
+        let read = split.inner.read(&mut buf[..to_read])?;
+        self.pos += read as u64;
+        Ok(read)
     }
 }
 
@@ -154,12 +149,6 @@ impl Seek for SplitFileReader {
     }
 }
 
-impl ReadStream for SplitFileReader {
-    fn stable_stream_len(&mut self) -> io::Result<u64> { Ok(self.len()) }
-
-    fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
-}
-
 impl Clone for SplitFileReader {
-    fn clone(&self) -> Self { Self { files: self.files.clone(), open_file: None, pos: self.pos } }
+    fn clone(&self) -> Self { Self { files: self.files.clone(), open_file: None, pos: 0 } }
 }

@@ -16,8 +16,8 @@ but does not currently support authoring.
 Currently supported file formats:
 - ISO (GCM)
 - WIA / RVZ
-- WBFS
-- CISO
+- WBFS (+ NKit 2 lossless)
+- CISO (+ NKit 2 lossless)
 - NFS (Wii U VC)
 
 ## CLI tool

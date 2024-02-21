@@ -4,8 +4,9 @@ use std::{
 };
 
 use crate::{
+    disc::DL_DVD_SIZE,
     io::MagicBytes,
-    util::reader::{read_from, read_u16_be, read_u32_be, read_u64_be, read_vec},
+    util::read::{read_from, read_u16_be, read_u32_be, read_u64_be, read_vec},
     DiscMeta,
 };
 
@@ -65,17 +66,19 @@ pub struct NKitHeader {
     pub md5: Option<[u8; 16]>,
     pub sha1: Option<[u8; 20]>,
     pub xxhash64: Option<u64>,
+    /// Bitstream of blocks that are junk data
+    pub junk_bits: Option<Vec<u8>>,
 }
 
 const VERSION_PREFIX: [u8; 7] = *b"NKIT  v";
 
 impl NKitHeader {
-    pub fn try_read_from<R>(reader: &mut R) -> Option<Self>
+    pub fn try_read_from<R>(reader: &mut R, block_size: u32, has_junk_bits: bool) -> Option<Self>
     where R: Read + Seek + ?Sized {
         let magic: MagicBytes = read_from(reader).ok()?;
         if magic == *b"NKIT" {
             reader.seek(SeekFrom::Current(-4)).ok()?;
-            match NKitHeader::read_from(reader) {
+            match NKitHeader::read_from(reader, block_size, has_junk_bits) {
                 Ok(header) => Some(header),
                 Err(e) => {
                     log::warn!("Failed to read NKit header: {}", e);
@@ -87,7 +90,7 @@ impl NKitHeader {
         }
     }
 
-    pub fn read_from<R>(reader: &mut R) -> io::Result<Self>
+    pub fn read_from<R>(reader: &mut R, block_size: u32, has_junk_bits: bool) -> io::Result<Self>
     where R: Read + ?Sized {
         let version_string: [u8; 8] = read_from(reader)?;
         if version_string[0..7] != VERSION_PREFIX
@@ -117,30 +120,54 @@ impl NKitHeader {
             remaining_header_size -= 2;
         }
         let header_bytes = read_vec(reader, remaining_header_size)?;
-        let mut reader = &header_bytes[..];
+        let mut inner = &header_bytes[..];
 
-        let flags = if version == 1 { NKIT_HEADER_V1_FLAGS } else { read_u16_be(&mut reader)? };
+        let flags = if version == 1 { NKIT_HEADER_V1_FLAGS } else { read_u16_be(&mut inner)? };
         let size = (flags & NKitHeaderFlags::Size as u16 != 0)
-            .then(|| read_u64_be(&mut reader))
+            .then(|| read_u64_be(&mut inner))
             .transpose()?;
         let crc32 = (flags & NKitHeaderFlags::Crc32 as u16 != 0)
-            .then(|| read_u32_be(&mut reader))
+            .then(|| read_u32_be(&mut inner))
             .transpose()?;
         let md5 = (flags & NKitHeaderFlags::Md5 as u16 != 0)
-            .then(|| read_from::<[u8; 16], _>(&mut reader))
+            .then(|| read_from::<[u8; 16], _>(&mut inner))
             .transpose()?;
         let sha1 = (flags & NKitHeaderFlags::Sha1 as u16 != 0)
-            .then(|| read_from::<[u8; 20], _>(&mut reader))
+            .then(|| read_from::<[u8; 20], _>(&mut inner))
             .transpose()?;
         let xxhash64 = (flags & NKitHeaderFlags::Xxhash64 as u16 != 0)
-            .then(|| read_u64_be(&mut reader))
+            .then(|| read_u64_be(&mut inner))
             .transpose()?;
-        Ok(Self { version, flags, size, crc32, md5, sha1, xxhash64 })
+
+        let junk_bits = if has_junk_bits {
+            let n = DL_DVD_SIZE.div_ceil(block_size as u64).div_ceil(8);
+            Some(read_vec(reader, n as usize)?)
+        } else {
+            None
+        };
+
+        Ok(Self { version, flags, size, crc32, md5, sha1, xxhash64, junk_bits })
+    }
+
+    pub fn is_junk_block(&self, block: u32) -> Option<bool> {
+        self.junk_bits
+            .as_ref()
+            .and_then(|v| v.get((block / 8) as usize))
+            .map(|&b| b & (1 << (7 - (block & 7))) != 0)
     }
 }
 
 impl From<&NKitHeader> for DiscMeta {
     fn from(value: &NKitHeader) -> Self {
-        Self { crc32: value.crc32, md5: value.md5, sha1: value.sha1, xxhash64: value.xxhash64 }
+        Self {
+            needs_hash_recovery: value.junk_bits.is_some(),
+            lossless: value.size.is_some() && value.junk_bits.is_some(),
+            disc_size: value.size,
+            crc32: value.crc32,
+            md5: value.md5,
+            sha1: value.sha1,
+            xxhash64: value.xxhash64,
+            ..Default::default()
+        }
     }
 }

@@ -20,14 +20,17 @@ use crate::{
     io::DiscIO,
     static_assert,
     streams::{ReadStream, SharedWindowedReadStream},
-    util::reader::read_from,
+    util::read::read_from,
     Error, Fst, OpenOptions, Result, ResultContext,
 };
 
 pub(crate) mod gcn;
+pub(crate) mod hashes;
+pub mod partition;
+pub mod reader;
 pub(crate) mod wii;
 
-pub(crate) const SECTOR_SIZE: usize = 0x8000;
+pub const SECTOR_SIZE: usize = 0x8000;
 
 /// Shared GameCube & Wii disc header
 #[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
@@ -372,23 +375,23 @@ pub const BI2_SIZE: usize = 0x2000;
 #[derive(Clone, Debug)]
 pub struct PartitionMeta {
     /// Disc and partition header (boot.bin)
-    pub raw_boot: [u8; BOOT_SIZE],
+    pub raw_boot: Box<[u8; BOOT_SIZE]>,
     /// Debug and region information (bi2.bin)
-    pub raw_bi2: [u8; BI2_SIZE],
+    pub raw_bi2: Box<[u8; BI2_SIZE]>,
     /// Apploader (apploader.bin)
-    pub raw_apploader: Vec<u8>,
+    pub raw_apploader: Box<[u8]>,
     /// File system table (fst.bin)
-    pub raw_fst: Vec<u8>,
+    pub raw_fst: Box<[u8]>,
     /// Main binary (main.dol)
-    pub raw_dol: Vec<u8>,
+    pub raw_dol: Box<[u8]>,
     /// Ticket (ticket.bin, Wii only)
-    pub raw_ticket: Option<Vec<u8>>,
+    pub raw_ticket: Option<Box<[u8]>>,
     /// TMD (tmd.bin, Wii only)
-    pub raw_tmd: Option<Vec<u8>>,
+    pub raw_tmd: Option<Box<[u8]>>,
     /// Certificate chain (cert.bin, Wii only)
-    pub raw_cert_chain: Option<Vec<u8>>,
+    pub raw_cert_chain: Option<Box<[u8]>>,
     /// H3 hash table (h3.bin, Wii only)
-    pub raw_h3_table: Option<Vec<u8>>,
+    pub raw_h3_table: Option<Box<[u8]>>,
 }
 
 impl PartitionMeta {
