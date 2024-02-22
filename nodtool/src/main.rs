@@ -8,7 +8,7 @@ use std::{
     env,
     error::Error,
     ffi::OsStr,
-    fs,
+    fmt, fs,
     fs::File,
     io,
     io::{BufWriter, Read, Write},
@@ -141,16 +141,15 @@ impl FromStr for LogLevel {
     }
 }
 
-impl ToString for LogLevel {
-    fn to_string(&self) -> String {
-        match self {
+impl fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", match self {
             LogLevel::Error => "error",
             LogLevel::Warn => "warn",
             LogLevel::Info => "info",
             LogLevel::Debug => "debug",
             LogLevel::Trace => "trace",
-        }
-        .to_string()
+        })
     }
 }
 
@@ -372,7 +371,7 @@ fn convert_and_verify(in_file: &Path, out_file: Option<&Path>, md5: bool) -> Res
     let pb = ProgressBar::new(disc_size);
     pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
         .unwrap()
-        .with_key("eta", |state: &ProgressState, w: &mut dyn std::fmt::Write| {
+        .with_key("eta", |state: &ProgressState, w: &mut dyn fmt::Write| {
             write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
         })
         .progress_chars("#>-"));
