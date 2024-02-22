@@ -6,7 +6,7 @@ use std::{
     mem::size_of,
 };
 
-use sha1::{digest, Digest, Sha1};
+use sha1::{Digest, Sha1};
 use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
 
 use crate::{

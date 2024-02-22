@@ -2,8 +2,6 @@
 
 use std::fmt;
 
-use crate::{streams::ReadStream, Result};
-
 pub(crate) mod block;
 pub(crate) mod ciso;
 pub(crate) mod iso;
@@ -21,19 +19,6 @@ pub(crate) type KeyBytes = [u8; 16];
 
 /// Magic bytes
 pub(crate) type MagicBytes = [u8; 4];
-
-/// Abstraction over supported disc file formats.
-pub trait DiscIO: Send + Sync {
-    /// Opens a new read stream for the disc file(s).
-    /// Generally does _not_ need to be used directly.
-    fn open(&self) -> Result<Box<dyn ReadStream + '_>>;
-
-    /// Returns extra metadata included in the disc file format, if any.
-    fn meta(&self) -> Result<DiscMeta> { Ok(DiscMeta::default()) }
-
-    /// If None, the file format does not store the original disc size. (e.g. WBFS, NFS)
-    fn disc_size(&self) -> Option<u64>;
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Format {

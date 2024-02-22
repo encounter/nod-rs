@@ -40,7 +40,7 @@ fn main() {
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("parsed-dats.bin");
-    let mut f = BufWriter::new(File::create(&dest_path).unwrap());
+    let mut f = BufWriter::new(File::create(dest_path).unwrap());
 
     // Parse dat files
     let mut entries = Vec::<(GameEntry, String)>::new();

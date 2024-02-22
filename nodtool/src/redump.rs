@@ -47,7 +47,7 @@ pub fn find_by_hashes(crc32: u32, sha1: [u8; 20]) -> Option<GameResult> {
 #[repr(C, align(4))]
 struct Aligned<T: ?Sized>(T);
 
-const DATA: &'static Aligned<[u8]> =
+const DATA: &Aligned<[u8]> =
     &Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/parsed-dats.bin")));
 
 // Keep in sync with build.rs

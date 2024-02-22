@@ -452,7 +452,7 @@ fn convert_and_verify(in_file: &Path, out_file: Option<&Path>, md5: bool) -> Res
     }
 
     let redump_entry = if let (Some(crc32), Some(sha1)) = (crc32, sha1) {
-        redump::find_by_hashes(crc32, sha1.into())
+        redump::find_by_hashes(crc32, sha1)
     } else {
         None
     };
