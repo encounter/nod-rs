@@ -12,13 +12,13 @@ use crate::{
     disc::SECTOR_SIZE,
     io::{
         aes_decrypt,
-        block::{BPartitionInfo, Block, BlockIO},
+        block::{Block, BlockIO, PartitionInfo},
         split::SplitFileReader,
-        KeyBytes, MagicBytes,
+        Format, KeyBytes, MagicBytes,
     },
     static_assert,
     util::read::read_from,
-    DiscMeta, Error, OpenOptions, Result, ResultContext,
+    DiscMeta, Error, Result, ResultContext,
 };
 
 pub const NFS_MAGIC: MagicBytes = *b"EGGS";
@@ -89,7 +89,6 @@ pub struct DiscIONFS {
     raw_size: u64,
     disc_size: u64,
     key: KeyBytes,
-    encrypt: bool,
 }
 
 impl Clone for DiscIONFS {
@@ -100,20 +99,18 @@ impl Clone for DiscIONFS {
             raw_size: self.raw_size,
             disc_size: self.disc_size,
             key: self.key,
-            encrypt: self.encrypt,
         }
     }
 }
 
 impl DiscIONFS {
-    pub fn new(directory: &Path, options: &OpenOptions) -> Result<Box<Self>> {
+    pub fn new(directory: &Path) -> Result<Box<Self>> {
         let mut disc_io = Box::new(Self {
             inner: SplitFileReader::empty(),
             header: NFSHeader::new_zeroed(),
             raw_size: 0,
             disc_size: 0,
             key: [0; 16],
-            encrypt: options.rebuild_encryption,
         });
         disc_io.load_files(directory)?;
         Ok(disc_io)
@@ -125,7 +122,7 @@ impl BlockIO for DiscIONFS {
         &mut self,
         out: &mut [u8],
         sector: u32,
-        partition: Option<&BPartitionInfo>,
+        partition: Option<&PartitionInfo>,
     ) -> io::Result<Option<Block>> {
         // Calculate physical sector
         let phys_sector = self.header.phys_sector(sector);
@@ -157,8 +154,8 @@ impl BlockIO for DiscIONFS {
 
     fn block_size(&self) -> u32 { SECTOR_SIZE as u32 }
 
-    fn meta(&self) -> Result<DiscMeta> {
-        Ok(DiscMeta { decrypted: true, lossless: true, ..Default::default() })
+    fn meta(&self) -> DiscMeta {
+        DiscMeta { format: Format::Nfs, decrypted: true, ..Default::default() }
     }
 }
 

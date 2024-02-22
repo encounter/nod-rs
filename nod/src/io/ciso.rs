@@ -10,10 +10,10 @@ use zerocopy::{little_endian::*, AsBytes, FromBytes, FromZeroes};
 use crate::{
     disc::SECTOR_SIZE,
     io::{
-        block::{BPartitionInfo, Block, BlockIO},
+        block::{Block, BlockIO, PartitionInfo},
         nkit::NKitHeader,
         split::SplitFileReader,
-        MagicBytes,
+        Format, MagicBytes,
     },
     static_assert,
     util::read::read_from,
@@ -101,7 +101,7 @@ impl BlockIO for DiscIOCISO {
         &mut self,
         out: &mut [u8],
         block: u32,
-        _partition: Option<&BPartitionInfo>,
+        _partition: Option<&PartitionInfo>,
     ) -> io::Result<Option<Block>> {
         if block >= CISO_MAP_SIZE as u32 {
             // Out of bounds
@@ -130,7 +130,15 @@ impl BlockIO for DiscIOCISO {
 
     fn block_size(&self) -> u32 { self.header.block_size.get() }
 
-    fn meta(&self) -> Result<DiscMeta> {
-        Ok(self.nkit_header.as_ref().map(DiscMeta::from).unwrap_or_default())
+    fn meta(&self) -> DiscMeta {
+        let mut result = DiscMeta {
+            format: Format::Ciso,
+            block_size: Some(self.header.block_size.get()),
+            ..Default::default()
+        };
+        if let Some(nkit_header) = &self.nkit_header {
+            nkit_header.apply(&mut result);
+        }
+        result
     }
 }

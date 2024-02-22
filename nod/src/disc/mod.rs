@@ -9,25 +9,20 @@ use std::{
     str::from_utf8,
 };
 
+use dyn_clone::DynClone;
 use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
 
 use crate::{
-    disc::{
-        gcn::DiscGCN,
-        wii::{DiscWii, Ticket, TmdHeader, WiiPartitionHeader},
-    },
+    disc::wii::{Ticket, TmdHeader},
     fst::Node,
-    io::DiscIO,
     static_assert,
     streams::{ReadStream, SharedWindowedReadStream},
-    util::read::read_from,
-    Error, Fst, OpenOptions, Result, ResultContext,
+    Fst, Result,
 };
 
 pub(crate) mod gcn;
 pub(crate) mod hashes;
-pub mod partition;
-pub mod reader;
+pub(crate) mod reader;
 pub(crate) mod wii;
 
 pub const SECTOR_SIZE: usize = 0x8000;
@@ -251,82 +246,8 @@ impl From<u32> for PartitionKind {
     }
 }
 
-/// Information about a GameCube or Wii disc partition.
-#[derive(Debug, Clone)]
-pub struct PartitionInfo {
-    /// Partition group index
-    pub group_index: u32,
-    /// Partition index within the group
-    pub part_index: u32,
-    /// Partition offset within disc
-    pub part_offset: u64,
-    /// Partition kind
-    pub kind: PartitionKind,
-    /// Data offset within partition
-    pub data_offset: u64,
-    /// Data size
-    pub data_size: u64,
-    /// Raw Wii partition header
-    pub header: Option<WiiPartitionHeader>,
-    /// Lagged Fibonacci generator seed (for junk data)
-    pub lfg_seed: [u8; 4],
-    // /// Junk data start offset
-    // pub junk_start: u64,
-}
-
-/// Contains a disc's header & partition information.
-pub trait DiscBase: Send + Sync {
-    /// Retrieves the disc's header.
-    fn header(&self) -> &DiscHeader;
-
-    /// A list of partitions on the disc.
-    fn partitions(&self) -> Vec<PartitionInfo>;
-
-    /// Opens a new, decrypted partition read stream for the specified partition index.
-    ///
-    /// `validate_hashes`: Validate Wii disc hashes while reading (slow!)
-    fn open_partition<'a>(
-        &self,
-        disc_io: &'a dyn DiscIO,
-        index: usize,
-        options: &OpenOptions,
-    ) -> Result<Box<dyn PartitionBase + 'a>>;
-
-    /// Opens a new partition read stream for the first partition matching
-    /// the specified type.
-    ///
-    /// `validate_hashes`: Validate Wii disc hashes while reading (slow!)
-    fn open_partition_kind<'a>(
-        &self,
-        disc_io: &'a dyn DiscIO,
-        part_type: PartitionKind,
-        options: &OpenOptions,
-    ) -> Result<Box<dyn PartitionBase + 'a>>;
-
-    /// The disc's size in bytes, or an estimate if not stored by the format.
-    fn disc_size(&self) -> u64;
-}
-
-/// Creates a new [`DiscBase`] instance.
-pub fn new(disc_io: &mut dyn DiscIO) -> Result<Box<dyn DiscBase>> {
-    let disc_size = disc_io.disc_size();
-    let mut stream = disc_io.open()?;
-    let header: DiscHeader = read_from(stream.as_mut()).context("Reading disc header")?;
-    if header.is_wii() {
-        Ok(Box::new(DiscWii::new(stream.as_mut(), header, disc_size)?))
-    } else if header.is_gamecube() {
-        Ok(Box::new(DiscGCN::new(stream.as_mut(), header, disc_size)?))
-    } else {
-        Err(Error::DiscFormat(format!(
-            "Invalid GC/Wii magic: {:#010X}/{:#010X}",
-            header.gcn_magic.get(),
-            header.wii_magic.get()
-        )))
-    }
-}
-
 /// An open read stream for a disc partition.
-pub trait PartitionBase: ReadStream {
+pub trait PartitionBase: DynClone + ReadStream + Send + Sync {
     /// Reads the partition header and file system table.
     fn meta(&mut self) -> Result<Box<PartitionMeta>>;
 
@@ -365,6 +286,8 @@ pub trait PartitionBase: ReadStream {
     /// whereas Wii discs have a data block size of 0x7c00.
     fn ideal_buffer_size(&self) -> usize;
 }
+
+dyn_clone::clone_trait_object!(PartitionBase);
 
 /// Size of the disc header and partition header (boot.bin)
 pub const BOOT_SIZE: usize = size_of::<DiscHeader>() + size_of::<PartitionHeader>();

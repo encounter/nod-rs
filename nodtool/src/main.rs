@@ -1,4 +1,6 @@
 mod argp_version;
+mod digest;
+mod redump;
 
 use std::{
     borrow::Cow,
@@ -12,23 +14,20 @@ use std::{
     io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{
-        mpsc::{sync_channel, SyncSender},
-        Arc,
-    },
+    sync::{mpsc::sync_channel, Arc},
     thread,
-    thread::JoinHandle,
 };
 
 use argp::{FromArgValue, FromArgs};
-use digest::{Digest, Output};
+use digest::{digest_thread, DigestResult};
 use enable_ansi_support::enable_ansi_support;
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use itertools::Itertools;
 use nod::{
-    Disc, DiscHeader, Fst, Node, OpenOptions, PartitionBase, PartitionKind, PartitionMeta, Result,
-    ResultContext, SECTOR_SIZE,
+    Compression, Disc, DiscHeader, DiscMeta, Fst, Node, OpenOptions, PartitionBase, PartitionKind,
+    PartitionMeta, Result, ResultContext, SECTOR_SIZE,
 };
+use size::Size;
 use supports_color::Stream;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
@@ -107,12 +106,12 @@ struct ConvertArgs {
 }
 
 #[derive(FromArgs, Debug)]
-/// Verifies a disc image.
+/// Verifies disc images.
 #[argp(subcommand, name = "verify")]
 struct VerifyArgs {
     #[argp(positional)]
-    /// path to disc image
-    file: PathBuf,
+    /// path to disc image(s)
+    file: Vec<PathBuf>,
     #[argp(switch)]
     /// enable MD5 hashing (slower)
     md5: bool,
@@ -226,8 +225,24 @@ fn main() {
     }
 }
 
-fn print_header(header: &DiscHeader) {
-    println!("Name: {}", header.game_title_str());
+fn print_header(header: &DiscHeader, meta: &DiscMeta) {
+    println!("Format: {}", meta.format);
+    if meta.compression != Compression::None {
+        println!("Compression: {}", meta.compression);
+    }
+    if let Some(block_size) = meta.block_size {
+        println!("Block size: {}", Size::from_bytes(block_size));
+    }
+    println!("Lossless: {}", meta.lossless);
+    println!(
+        "Verification data: {}",
+        meta.crc32.is_some()
+            || meta.md5.is_some()
+            || meta.sha1.is_some()
+            || meta.xxhash64.is_some()
+    );
+    println!();
+    println!("Title: {}", header.game_title_str());
     println!("Game ID: {}", header.game_id_str());
     println!("Disc {}, Revision {}", header.disc_num + 1, header.disc_version);
     if header.no_partition_hashes != 0 {
@@ -240,12 +255,12 @@ fn print_header(header: &DiscHeader) {
 
 fn info(args: InfoArgs) -> Result<()> {
     let disc = Disc::new_with_options(args.file, &OpenOptions {
-        rebuild_hashes: false,
-        validate_hashes: false,
         rebuild_encryption: false,
+        validate_hashes: false,
     })?;
     let header = disc.header();
-    print_header(header);
+    let meta = disc.meta();
+    print_header(header, &meta);
 
     if header.is_wii() {
         for (idx, info) in disc.partitions().iter().enumerate() {
@@ -260,7 +275,7 @@ fn info(args: InfoArgs) -> Result<()> {
                 "\tData offset / size: {:#X} / {:#X} ({})",
                 info.data_start_sector as u64 * SECTOR_SIZE as u64,
                 data_size,
-                file_size::fit_4(data_size)
+                Size::from_bytes(data_size)
             );
             println!(
                 "\tTMD  offset / size: {:#X} / {:#X}",
@@ -278,26 +293,25 @@ fn info(args: InfoArgs) -> Result<()> {
                 info.header.h3_table_size()
             );
 
-            // let mut partition = disc.open_partition(idx)?;
-            // let meta = partition.meta()?;
-            // let header = meta.header();
-            // let tmd = meta.tmd_header();
-            // let title_id_str = if let Some(tmd) = tmd {
-            //     format!(
-            //         "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            //         tmd.title_id[0],
-            //         tmd.title_id[1],
-            //         tmd.title_id[2],
-            //         tmd.title_id[3],
-            //         tmd.title_id[4],
-            //         tmd.title_id[5],
-            //         tmd.title_id[6],
-            //         tmd.title_id[7]
-            //     )
-            // } else {
-            let title_id_str = "N/A".to_string();
-            // };
-            println!("\tName: {}", info.disc_header.game_title_str());
+            let mut partition = disc.open_partition(idx)?;
+            let meta = partition.meta()?;
+            let tmd = meta.tmd_header();
+            let title_id_str = if let Some(tmd) = tmd {
+                format!(
+                    "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+                    tmd.title_id[0],
+                    tmd.title_id[1],
+                    tmd.title_id[2],
+                    tmd.title_id[3],
+                    tmd.title_id[4],
+                    tmd.title_id[5],
+                    tmd.title_id[6],
+                    tmd.title_id[7]
+                )
+            } else {
+                "N/A".to_string()
+            };
+            println!("\tTitle: {}", info.disc_header.game_title_str());
             println!("\tGame ID: {} ({})", info.disc_header.game_id_str(), title_id_str);
             println!(
                 "\tDisc {}, Revision {}",
@@ -321,19 +335,24 @@ fn convert(args: ConvertArgs) -> Result<()> {
     convert_and_verify(&args.file, Some(&args.out), args.md5)
 }
 
-fn verify(args: VerifyArgs) -> Result<()> { convert_and_verify(&args.file, None, args.md5) }
+fn verify(args: VerifyArgs) -> Result<()> {
+    for file in &args.file {
+        convert_and_verify(file, None, args.md5)?;
+        println!();
+    }
+    Ok(())
+}
 
 fn convert_and_verify(in_file: &Path, out_file: Option<&Path>, md5: bool) -> Result<()> {
     println!("Loading {}", in_file.display());
     let mut disc = Disc::new_with_options(in_file, &OpenOptions {
-        rebuild_hashes: true,
-        validate_hashes: false,
         rebuild_encryption: true,
+        validate_hashes: false,
     })?;
     let header = disc.header();
-    print_header(header);
+    let meta = disc.meta();
+    print_header(header, &meta);
 
-    let meta = disc.meta()?;
     let disc_size = disc.disc_size();
 
     let mut file = if let Some(out_file) = out_file {
@@ -345,7 +364,11 @@ fn convert_and_verify(in_file: &Path, out_file: Option<&Path>, md5: bool) -> Res
         None
     };
 
-    println!("\nHashing...");
+    if out_file.is_some() {
+        println!("\nConverting...");
+    } else {
+        println!("\nVerifying...");
+    }
     let pb = ProgressBar::new(disc_size);
     pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
         .unwrap()
@@ -394,7 +417,7 @@ fn convert_and_verify(in_file: &Path, out_file: Option<&Path>, md5: bool) -> Res
     let mut buf = <u8>::new_box_slice_zeroed(BUFFER_SIZE);
     while total_read < disc_size {
         let read = min(BUFFER_SIZE as u64, disc_size - total_read) as usize;
-        disc.reader.read_exact(&mut buf[..read]).with_context(|| {
+        disc.read_exact(&mut buf[..read]).with_context(|| {
             format!("Reading {} bytes at disc offset {}", BUFFER_SIZE, total_read)
         })?;
 
@@ -410,60 +433,64 @@ fn convert_and_verify(in_file: &Path, out_file: Option<&Path>, md5: bool) -> Res
 
     println!();
     if let Some(path) = out_file {
-        println!("Wrote {} to {}", file_size::fit_4(total_read), path.display());
+        println!("Wrote {} to {}", Size::from_bytes(total_read), path.display());
     }
 
     println!();
+    let mut crc32 = None;
+    let mut md5 = None;
+    let mut sha1 = None;
+    let mut xxh64 = None;
     for (tx, handle) in digest_threads {
         drop(tx); // Close channel
         match handle.join().unwrap() {
-            DigestResult::Crc32(crc) => {
-                print!("CRC32: {:08x}", crc);
-                if let Some(expected_crc) = meta.crc32 {
-                    if expected_crc != crc {
-                        print!(" ❌ (expected: {:08x})", expected_crc);
-                    } else {
-                        print!(" ✅");
-                    }
-                }
-                println!();
-            }
-            DigestResult::Md5(md5) => {
-                print!("MD5:   {:032x}", md5);
-                if let Some(expected_md5) = meta.md5 {
-                    let expected_md5 = <Output<md5::Md5>>::from(expected_md5);
-                    if expected_md5 != md5 {
-                        print!(" ❌ (expected: {:032x})", expected_md5);
-                    } else {
-                        print!(" ✅");
-                    }
-                }
-                println!();
-            }
-            DigestResult::Sha1(sha1) => {
-                print!("SHA-1: {:040x}", sha1);
-                if let Some(expected_sha1) = meta.sha1 {
-                    let expected_sha1 = <Output<sha1::Sha1>>::from(expected_sha1);
-                    if expected_sha1 != sha1 {
-                        print!(" ❌ (expected: {:040x})", expected_sha1);
-                    } else {
-                        print!(" ✅");
-                    }
-                }
-                println!();
-            }
-            DigestResult::Xxh64(xxh64) => {
-                print!("XXH64: {:016x}", xxh64);
-                if let Some(expected_xxh64) = meta.xxhash64 {
-                    if expected_xxh64 != xxh64 {
-                        print!(" ❌ (expected: {:016x})", expected_xxh64);
-                    } else {
-                        print!(" ✅");
-                    }
-                }
-                println!();
-            }
+            DigestResult::Crc32(v) => crc32 = Some(v),
+            DigestResult::Md5(v) => md5 = Some(v),
+            DigestResult::Sha1(v) => sha1 = Some(v),
+            DigestResult::Xxh64(v) => xxh64 = Some(v),
         }
+    }
+
+    let redump_entry = if let (Some(crc32), Some(sha1)) = (crc32, sha1) {
+        redump::find_by_hashes(crc32, sha1.into())
+    } else {
+        None
+    };
+    let expected_crc32 = meta.crc32.or(redump_entry.as_ref().map(|e| e.crc32));
+    let expected_md5 = meta.md5.or(redump_entry.as_ref().map(|e| e.md5));
+    let expected_sha1 = meta.sha1.or(redump_entry.as_ref().map(|e| e.sha1));
+    let expected_xxh64 = meta.xxhash64;
+
+    fn print_digest(value: DigestResult, expected: Option<DigestResult>) {
+        print!("{:<6}: ", value.name());
+        if let Some(expected) = expected {
+            if expected != value {
+                print!("{} ❌ (expected: {})", value, expected);
+            } else {
+                print!("{} ✅", value);
+            }
+        } else {
+            print!("{}", value);
+        }
+        println!();
+    }
+
+    if let Some(entry) = &redump_entry {
+        println!("Redump: {} ✅", entry.name);
+    } else {
+        println!("Redump: Not found ❌");
+    }
+    if let Some(crc32) = crc32 {
+        print_digest(DigestResult::Crc32(crc32), expected_crc32.map(DigestResult::Crc32));
+    }
+    if let Some(md5) = md5 {
+        print_digest(DigestResult::Md5(md5), expected_md5.map(DigestResult::Md5));
+    }
+    if let Some(sha1) = sha1 {
+        print_digest(DigestResult::Sha1(sha1), expected_sha1.map(DigestResult::Sha1));
+    }
+    if let Some(xxh64) = xxh64 {
+        print_digest(DigestResult::Xxh64(xxh64), expected_xxh64.map(DigestResult::Xxh64));
     }
     Ok(())
 }
@@ -490,42 +517,41 @@ fn extract(args: ExtractArgs) -> Result<()> {
         output_dir = args.file.with_extension("");
     }
     let disc = Disc::new_with_options(&args.file, &OpenOptions {
-        rebuild_hashes: args.validate,
-        validate_hashes: args.validate,
         rebuild_encryption: false,
+        validate_hashes: args.validate,
     })?;
     let is_wii = disc.header().is_wii();
-    // let mut partition = disc.open_partition_kind(PartitionKind::Data)?;
-    // let meta = partition.meta()?;
-    // extract_sys_files(meta.as_ref(), &output_dir.join("sys"), args.quiet)?;
-    //
-    // // Extract FST
-    // let files_dir = output_dir.join("files");
-    // let fst = Fst::new(&meta.raw_fst)?;
-    // let mut path_segments = Vec::<(Cow<str>, usize)>::new();
-    // for (idx, node, name) in fst.iter() {
-    //     // Remove ended path segments
-    //     let mut new_size = 0;
-    //     for (_, end) in path_segments.iter() {
-    //         if *end == idx {
-    //             break;
-    //         }
-    //         new_size += 1;
-    //     }
-    //     path_segments.truncate(new_size);
-    //
-    //     // Add the new path segment
-    //     let end = if node.is_dir() { node.length(false) as usize } else { idx + 1 };
-    //     path_segments.push((name?, end));
-    //
-    //     let path = path_segments.iter().map(|(name, _)| name.as_ref()).join("/");
-    //     if node.is_dir() {
-    //         fs::create_dir_all(files_dir.join(&path))
-    //             .with_context(|| format!("Creating directory {}", path))?;
-    //     } else {
-    //         extract_node(node, partition.as_mut(), &files_dir, &path, is_wii, args.quiet)?;
-    //     }
-    // }
+    let mut partition = disc.open_partition_kind(PartitionKind::Data)?;
+    let meta = partition.meta()?;
+    extract_sys_files(meta.as_ref(), &output_dir.join("sys"), args.quiet)?;
+
+    // Extract FST
+    let files_dir = output_dir.join("files");
+    let fst = Fst::new(&meta.raw_fst)?;
+    let mut path_segments = Vec::<(Cow<str>, usize)>::new();
+    for (idx, node, name) in fst.iter() {
+        // Remove ended path segments
+        let mut new_size = 0;
+        for (_, end) in path_segments.iter() {
+            if *end == idx {
+                break;
+            }
+            new_size += 1;
+        }
+        path_segments.truncate(new_size);
+
+        // Add the new path segment
+        let end = if node.is_dir() { node.length(false) as usize } else { idx + 1 };
+        path_segments.push((name?, end));
+
+        let path = path_segments.iter().map(|(name, _)| name.as_ref()).join("/");
+        if node.is_dir() {
+            fs::create_dir_all(files_dir.join(&path))
+                .with_context(|| format!("Creating directory {}", path))?;
+        } else {
+            extract_node(node, partition.as_mut(), &files_dir, &path, is_wii, args.quiet)?;
+        }
+    }
     Ok(())
 }
 
@@ -542,11 +568,7 @@ fn extract_sys_files(data: &PartitionMeta, out_dir: &Path, quiet: bool) -> Resul
 
 fn extract_file(bytes: &[u8], out_path: &Path, quiet: bool) -> Result<()> {
     if !quiet {
-        println!(
-            "Extracting {} (size: {})",
-            out_path.display(),
-            file_size::fit_4(bytes.len() as u64)
-        );
+        println!("Extracting {} (size: {})", out_path.display(), Size::from_bytes(bytes.len()));
     }
     fs::write(out_path, bytes).with_context(|| format!("Writing file {}", out_path.display()))?;
     Ok(())
@@ -565,7 +587,7 @@ fn extract_node(
         println!(
             "Extracting {} (size: {})",
             file_path.display(),
-            file_size::fit_4(node.length(is_wii))
+            Size::from_bytes(node.length(is_wii))
         );
     }
     let file = File::create(&file_path)
@@ -582,66 +604,4 @@ fn extract_node(
     io::copy(&mut r, &mut w).with_context(|| format!("Extracting file {}", file_path.display()))?;
     w.flush().with_context(|| format!("Flushing file {}", file_path.display()))?;
     Ok(())
-}
-
-type DigestThread = (SyncSender<Arc<[u8]>>, JoinHandle<DigestResult>);
-
-fn digest_thread<H>() -> DigestThread
-where H: Hasher + Send + 'static {
-    let (tx, rx) = sync_channel::<Arc<[u8]>>(1);
-    let handle = thread::spawn(move || {
-        let mut hasher = H::new();
-        while let Ok(data) = rx.recv() {
-            hasher.update(data.as_ref());
-        }
-        hasher.finalize()
-    });
-    (tx, handle)
-}
-
-enum DigestResult {
-    Crc32(u32),
-    Md5(Output<md5::Md5>),
-    Sha1(Output<sha1::Sha1>),
-    Xxh64(u64),
-}
-
-trait Hasher {
-    fn new() -> Self;
-    fn finalize(self) -> DigestResult;
-    fn update(&mut self, data: &[u8]);
-}
-
-impl Hasher for md5::Md5 {
-    fn new() -> Self { Digest::new() }
-
-    fn finalize(self) -> DigestResult { DigestResult::Md5(Digest::finalize(self)) }
-
-    fn update(&mut self, data: &[u8]) { Digest::update(self, data) }
-}
-
-impl Hasher for sha1::Sha1 {
-    fn new() -> Self { Digest::new() }
-
-    fn finalize(self) -> DigestResult { DigestResult::Sha1(Digest::finalize(self)) }
-
-    fn update(&mut self, data: &[u8]) { Digest::update(self, data) }
-}
-
-impl Hasher for crc32fast::Hasher {
-    fn new() -> Self { crc32fast::Hasher::new() }
-
-    fn finalize(self) -> DigestResult { DigestResult::Crc32(crc32fast::Hasher::finalize(self)) }
-
-    fn update(&mut self, data: &[u8]) { crc32fast::Hasher::update(self, data) }
-}
-
-impl Hasher for xxhash_rust::xxh64::Xxh64 {
-    fn new() -> Self { xxhash_rust::xxh64::Xxh64::new(0) }
-
-    fn finalize(self) -> DigestResult {
-        DigestResult::Xxh64(xxhash_rust::xxh64::Xxh64::digest(&self))
-    }
-
-    fn update(&mut self, data: &[u8]) { xxhash_rust::xxh64::Xxh64::update(self, data) }
 }

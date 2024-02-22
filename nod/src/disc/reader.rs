@@ -8,14 +8,15 @@ use zerocopy::FromZeroes;
 
 use crate::{
     disc::{
+        gcn::PartitionGC,
         hashes::{rebuild_hashes, HashTable},
-        partition::PartitionReader,
-        wii::{WiiPartEntry, WiiPartGroup, WiiPartitionHeader, WII_PART_GROUP_OFF},
+        wii::{PartitionWii, WiiPartEntry, WiiPartGroup, WiiPartitionHeader, WII_PART_GROUP_OFF},
         DL_DVD_SIZE, MINI_DVD_SIZE, SL_DVD_SIZE,
     },
-    io::block::{BPartitionInfo, Block, BlockIO},
+    io::block::{Block, BlockIO, PartitionInfo},
     util::read::{read_box, read_from, read_vec},
-    DiscHeader, Error, PartitionHeader, PartitionKind, Result, ResultContext, SECTOR_SIZE,
+    DiscHeader, DiscMeta, Error, OpenOptions, PartitionBase, PartitionHeader, PartitionKind,
+    Result, ResultContext, SECTOR_SIZE,
 };
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -25,7 +26,7 @@ pub enum EncryptionMode {
 }
 
 pub struct DiscReader {
-    pub(crate) io: Box<dyn BlockIO>,
+    io: Box<dyn BlockIO>,
     block: Option<Block>,
     block_buf: Box<[u8]>,
     block_idx: u32,
@@ -34,7 +35,7 @@ pub struct DiscReader {
     pos: u64,
     mode: EncryptionMode,
     disc_header: Box<DiscHeader>,
-    pub(crate) partitions: Vec<BPartitionInfo>,
+    pub(crate) partitions: Vec<PartitionInfo>,
     hash_tables: Vec<HashTable>,
 }
 
@@ -57,9 +58,9 @@ impl Clone for DiscReader {
 }
 
 impl DiscReader {
-    pub fn new(inner: Box<dyn BlockIO>, mode: EncryptionMode) -> Result<Self> {
+    pub fn new(inner: Box<dyn BlockIO>, options: &OpenOptions) -> Result<Self> {
         let block_size = inner.block_size();
-        let meta = inner.meta()?;
+        let meta = inner.meta();
         let mut reader = Self {
             io: inner,
             block: None,
@@ -68,7 +69,11 @@ impl DiscReader {
             sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed(),
             sector_idx: u32::MAX,
             pos: 0,
-            mode,
+            mode: if options.rebuild_encryption {
+                EncryptionMode::Encrypted
+            } else {
+                EncryptionMode::Decrypted
+            },
             disc_header: DiscHeader::new_box_zeroed(),
             partitions: vec![],
             hash_tables: vec![],
@@ -78,7 +83,7 @@ impl DiscReader {
         if reader.disc_header.is_wii() {
             reader.partitions = read_partition_info(&mut reader)?;
             // Rebuild hashes if the format requires it
-            if mode == EncryptionMode::Encrypted && meta.needs_hash_recovery {
+            if options.rebuild_encryption && meta.needs_hash_recovery {
                 rebuild_hashes(&mut reader)?;
             }
         }
@@ -96,16 +101,53 @@ impl DiscReader {
     }
 
     pub fn disc_size(&self) -> u64 {
-        self.io
-            .meta()
-            .ok()
-            .and_then(|m| m.disc_size)
-            .unwrap_or_else(|| guess_disc_size(&self.partitions))
+        self.io.meta().disc_size.unwrap_or_else(|| guess_disc_size(&self.partitions))
     }
 
     pub fn header(&self) -> &DiscHeader { &self.disc_header }
 
-    pub fn partitions(&self) -> &[BPartitionInfo] { &self.partitions }
+    pub fn partitions(&self) -> &[PartitionInfo] { &self.partitions }
+
+    pub fn meta(&self) -> DiscMeta { self.io.meta() }
+
+    /// Opens a new, decrypted partition read stream for the specified partition index.
+    pub fn open_partition(
+        &self,
+        index: usize,
+        options: &OpenOptions,
+    ) -> Result<Box<dyn PartitionBase>> {
+        if self.disc_header.is_gamecube() {
+            if index == 0 {
+                Ok(PartitionGC::new(self.io.clone(), self.disc_header.clone())?)
+            } else {
+                Err(Error::DiscFormat("GameCube discs only have one partition".to_string()))
+            }
+        } else if let Some(part) = self.partitions.get(index) {
+            Ok(PartitionWii::new(self.io.clone(), self.disc_header.clone(), part, options)?)
+        } else {
+            Err(Error::DiscFormat(format!("Partition {index} not found")))
+        }
+    }
+
+    /// Opens a new, decrypted partition read stream for the first partition matching
+    /// the specified type.
+    pub fn open_partition_kind(
+        &self,
+        part_type: PartitionKind,
+        options: &OpenOptions,
+    ) -> Result<Box<dyn PartitionBase>> {
+        if self.disc_header.is_gamecube() {
+            if part_type == PartitionKind::Data {
+                Ok(PartitionGC::new(self.io.clone(), self.disc_header.clone())?)
+            } else {
+                Err(Error::DiscFormat("GameCube discs only have a data partition".to_string()))
+            }
+        } else if let Some(part) = self.partitions.iter().find(|v| v.kind == part_type) {
+            Ok(PartitionWii::new(self.io.clone(), self.disc_header.clone(), part, options)?)
+        } else {
+            Err(Error::DiscFormat(format!("Partition type {part_type} not found")))
+        }
+    }
 }
 
 impl Read for DiscReader {
@@ -135,14 +177,14 @@ impl Read for DiscReader {
             if let Some(partition) = partition {
                 match self.mode {
                     EncryptionMode::Decrypted => block.decrypt(
-                        &mut self.sector_buf,
+                        self.sector_buf.as_mut(),
                         self.block_buf.as_ref(),
                         block_idx,
                         abs_sector,
                         partition,
                     )?,
                     EncryptionMode::Encrypted => block.encrypt(
-                        &mut self.sector_buf,
+                        self.sector_buf.as_mut(),
                         self.block_buf.as_ref(),
                         block_idx,
                         abs_sector,
@@ -151,7 +193,7 @@ impl Read for DiscReader {
                 }
             } else {
                 block.copy_raw(
-                    &mut self.sector_buf,
+                    self.sector_buf.as_mut(),
                     self.block_buf.as_ref(),
                     block_idx,
                     abs_sector,
@@ -186,26 +228,26 @@ impl Seek for DiscReader {
     }
 }
 
-fn read_partition_info(stream: &mut DiscReader) -> crate::Result<Vec<BPartitionInfo>> {
-    stream.seek(SeekFrom::Start(WII_PART_GROUP_OFF)).context("Seeking to partition groups")?;
-    let part_groups: [WiiPartGroup; 4] = read_from(stream).context("Reading partition groups")?;
+fn read_partition_info(reader: &mut DiscReader) -> crate::Result<Vec<PartitionInfo>> {
+    reader.seek(SeekFrom::Start(WII_PART_GROUP_OFF)).context("Seeking to partition groups")?;
+    let part_groups: [WiiPartGroup; 4] = read_from(reader).context("Reading partition groups")?;
     let mut part_info = Vec::new();
     for (group_idx, group) in part_groups.iter().enumerate() {
         let part_count = group.part_count.get();
         if part_count == 0 {
             continue;
         }
-        stream
+        reader
             .seek(SeekFrom::Start(group.part_entry_off()))
             .with_context(|| format!("Seeking to partition group {group_idx}"))?;
-        let entries: Vec<WiiPartEntry> = read_vec(stream, part_count as usize)
+        let entries: Vec<WiiPartEntry> = read_vec(reader, part_count as usize)
             .with_context(|| format!("Reading partition group {group_idx}"))?;
         for (part_idx, entry) in entries.iter().enumerate() {
             let offset = entry.offset();
-            stream
+            reader
                 .seek(SeekFrom::Start(offset))
                 .with_context(|| format!("Seeking to partition data {group_idx}:{part_idx}"))?;
-            let header: Box<WiiPartitionHeader> = read_box(stream)
+            let header: Box<WiiPartitionHeader> = read_box(reader)
                 .with_context(|| format!("Reading partition header {group_idx}:{part_idx}"))?;
 
             let key = header.ticket.decrypt_title_key()?;
@@ -224,8 +266,8 @@ fn read_partition_info(stream: &mut DiscReader) -> crate::Result<Vec<BPartitionI
                     "Partition {group_idx}:{part_idx} data is not sector aligned",
                 )));
             }
-            let mut info = BPartitionInfo {
-                index: part_info.len() as u32,
+            let mut info = PartitionInfo {
+                index: part_info.len(),
                 kind: entry.kind.get().into(),
                 start_sector: (start_offset / SECTOR_SIZE as u64) as u32,
                 data_start_sector: (data_start_offset / SECTOR_SIZE as u64) as u32,
@@ -237,7 +279,12 @@ fn read_partition_info(stream: &mut DiscReader) -> crate::Result<Vec<BPartitionI
                 hash_table: None,
             };
 
-            let mut partition_reader = PartitionReader::new(stream.io.clone(), &info)?;
+            let mut partition_reader = PartitionWii::new(
+                reader.io.clone(),
+                reader.disc_header.clone(),
+                &info,
+                &OpenOptions::default(),
+            )?;
             info.disc_header = read_box(&mut partition_reader).context("Reading disc header")?;
             info.partition_header =
                 read_box(&mut partition_reader).context("Reading partition header")?;
@@ -248,7 +295,7 @@ fn read_partition_info(stream: &mut DiscReader) -> crate::Result<Vec<BPartitionI
     Ok(part_info)
 }
 
-fn guess_disc_size(part_info: &[BPartitionInfo]) -> u64 {
+fn guess_disc_size(part_info: &[PartitionInfo]) -> u64 {
     let max_offset = part_info
         .iter()
         .flat_map(|v| {

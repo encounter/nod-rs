@@ -36,22 +36,22 @@
 //! }
 //! ```
 
-use std::path::Path;
+use std::{
+    io::{Read, Seek},
+    path::Path,
+};
 
 pub use disc::{
-    AppLoaderHeader, DiscHeader, DolHeader, PartitionBase, PartitionHeader, PartitionInfo,
-    PartitionKind, PartitionMeta, BI2_SIZE, BOOT_SIZE, SECTOR_SIZE,
+    AppLoaderHeader, DiscHeader, DolHeader, PartitionBase, PartitionHeader, PartitionKind,
+    PartitionMeta, BI2_SIZE, BOOT_SIZE, SECTOR_SIZE,
 };
 pub use fst::{Fst, Node, NodeKind};
-pub use io::DiscMeta;
-use io::{block, block::BPartitionInfo};
+pub use io::{block::PartitionInfo, Compression, DiscMeta, Format};
 pub use streams::ReadStream;
-
-use crate::disc::reader::{DiscReader, EncryptionMode};
 
 mod disc;
 mod fst;
-pub mod io;
+mod io;
 mod streams;
 mod util;
 
@@ -110,24 +110,15 @@ where E: ErrorContext
 
 #[derive(Default, Debug, Clone)]
 pub struct OpenOptions {
-    /// Wii: Validate partition data hashes while reading the disc image if present.
-    pub validate_hashes: bool,
-    /// Wii: Rebuild partition data hashes for the disc image if the underlying format
-    /// does not store them. (e.g. WIA/RVZ)
-    pub rebuild_hashes: bool,
-    /// Wii: Rebuild partition data encryption if the underlying format stores data decrypted.
-    /// (e.g. WIA/RVZ, NFS)
-    ///
-    /// Unnecessary if only opening a disc partition stream, which will already provide a decrypted
-    /// stream. In this case, this will cause unnecessary processing.
-    ///
-    /// Only valid in combination with `rebuild_hashes`, as the data encryption is derived from the
-    /// partition data hashes.
+    /// Wii: Rebuild partition data encryption and hashes if the underlying format stores data
+    /// decrypted or with hashes removed. (e.g. WIA/RVZ, NFS)
     pub rebuild_encryption: bool,
+    /// Wii: Validate partition data hashes while reading the disc image.
+    pub validate_hashes: bool,
 }
 
 pub struct Disc {
-    pub reader: DiscReader,
+    reader: disc::reader::DiscReader,
     options: OpenOptions,
 }
 
@@ -139,8 +130,8 @@ impl Disc {
 
     /// Opens a disc image from a file path with custom options.
     pub fn new_with_options<P: AsRef<Path>>(path: P, options: &OpenOptions) -> Result<Disc> {
-        let io = block::open(path.as_ref(), options)?;
-        let reader = DiscReader::new(io, EncryptionMode::Encrypted)?;
+        let io = io::block::open(path.as_ref())?;
+        let reader = disc::reader::DiscReader::new(io, options)?;
         Ok(Disc { reader, options: options.clone() })
     }
 
@@ -148,30 +139,36 @@ impl Disc {
     pub fn header(&self) -> &DiscHeader { self.reader.header() }
 
     /// Returns extra metadata included in the disc file format, if any.
-    pub fn meta(&self) -> Result<DiscMeta> { self.reader.io.meta() }
+    pub fn meta(&self) -> DiscMeta { self.reader.meta() }
 
-    /// The disc's size in bytes or an estimate if not stored by the format.
+    /// The disc's size in bytes, or an estimate if not stored by the format.
     pub fn disc_size(&self) -> u64 { self.reader.disc_size() }
 
-    /// A list of partitions on the disc.
+    /// A list of Wii partitions on the disc.
     ///
-    /// For GameCube discs, this will return a single data partition spanning the entire disc.
-    pub fn partitions(&self) -> &[BPartitionInfo] { self.reader.partitions() }
+    /// For GameCube discs, this will return an empty slice.
+    pub fn partitions(&self) -> &[PartitionInfo] { self.reader.partitions() }
 
-    // /// Opens a new read stream for the base disc image.
-    // ///
-    // /// Generally does _not_ need to be used directly. Opening a partition will provide a
-    // /// decrypted stream instead.
-    // pub fn open(&self) -> Result<Box<dyn ReadStream + '_>> { self.io.open() }
-    //
-    // /// Opens a new, decrypted partition read stream for the specified partition index.
-    // pub fn open_partition(&self, index: usize) -> Result<Box<dyn PartitionBase + '_>> {
-    //     self.base.open_partition(self.io.as_ref(), index, &self.options)
-    // }
-    //
-    // /// Opens a new partition read stream for the first partition matching
-    // /// the specified type.
-    // pub fn open_partition_kind(&self, kind: PartitionKind) -> Result<Box<dyn PartitionBase + '_>> {
-    //     self.base.open_partition_kind(self.io.as_ref(), kind, &self.options)
-    // }
+    /// Opens a new, decrypted partition read stream for the specified partition index.
+    ///
+    /// For GameCube discs, the index must always be 0.
+    pub fn open_partition(&self, index: usize) -> Result<Box<dyn PartitionBase>> {
+        self.reader.open_partition(index, &self.options)
+    }
+
+    /// Opens a new partition read stream for the first partition matching
+    /// the specified type.
+    ///
+    /// For GameCube discs, the kind must always be `PartitionKind::Data`.
+    pub fn open_partition_kind(&self, kind: PartitionKind) -> Result<Box<dyn PartitionBase>> {
+        self.reader.open_partition_kind(kind, &self.options)
+    }
+}
+
+impl Read for Disc {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> { self.reader.read(buf) }
+}
+
+impl Seek for Disc {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> { self.reader.seek(pos) }
 }

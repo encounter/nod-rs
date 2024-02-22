@@ -7,8 +7,9 @@ use std::{
 use crate::{
     disc::SECTOR_SIZE,
     io::{
-        block::{BPartitionInfo, Block, BlockIO},
+        block::{Block, BlockIO, PartitionInfo},
         split::SplitFileReader,
+        Format,
     },
     DiscMeta, Error, Result,
 };
@@ -35,7 +36,7 @@ impl BlockIO for DiscIOISO {
         &mut self,
         out: &mut [u8],
         block: u32,
-        _partition: Option<&BPartitionInfo>,
+        _partition: Option<&PartitionInfo>,
     ) -> io::Result<Option<Block>> {
         let offset = block as u64 * SECTOR_SIZE as u64;
         if offset >= self.inner.len() {
@@ -50,7 +51,12 @@ impl BlockIO for DiscIOISO {
 
     fn block_size(&self) -> u32 { SECTOR_SIZE as u32 }
 
-    fn meta(&self) -> Result<DiscMeta> {
-        Ok(DiscMeta { lossless: true, disc_size: Some(self.inner.len()), ..Default::default() })
+    fn meta(&self) -> DiscMeta {
+        DiscMeta {
+            format: Format::Iso,
+            lossless: true,
+            disc_size: Some(self.inner.len()),
+            ..Default::default()
+        }
     }
 }

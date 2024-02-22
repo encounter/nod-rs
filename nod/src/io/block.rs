@@ -12,8 +12,7 @@ use crate::{
     },
     io::{aes_decrypt, aes_encrypt, ciso, iso, nfs, wbfs, wia, KeyBytes, MagicBytes},
     util::{lfg::LaggedFibonacci, read::read_from},
-    DiscHeader, DiscMeta, Error, OpenOptions, PartitionHeader, PartitionKind, Result,
-    ResultContext,
+    DiscHeader, DiscMeta, Error, PartitionHeader, PartitionKind, Result, ResultContext,
 };
 
 /// Block I/O trait for reading disc images.
@@ -23,20 +22,20 @@ pub trait BlockIO: DynClone + Send + Sync {
         &mut self,
         out: &mut [u8],
         block: u32,
-        partition: Option<&BPartitionInfo>,
+        partition: Option<&PartitionInfo>,
     ) -> io::Result<Option<Block>>;
 
     /// The format's block size in bytes. Must be a multiple of the sector size (0x8000).
     fn block_size(&self) -> u32;
 
     /// Returns extra metadata included in the disc file format, if any.
-    fn meta(&self) -> Result<DiscMeta>;
+    fn meta(&self) -> DiscMeta;
 }
 
 dyn_clone::clone_trait_object!(BlockIO);
 
 /// Creates a new [`BlockIO`] instance.
-pub fn open(filename: &Path, options: &OpenOptions) -> Result<Box<dyn BlockIO>> {
+pub fn open(filename: &Path) -> Result<Box<dyn BlockIO>> {
     let path_result = fs::canonicalize(filename);
     if let Err(err) = path_result {
         return Err(Error::Io(format!("Failed to open {}", filename.display()), err));
@@ -58,20 +57,18 @@ pub fn open(filename: &Path, options: &OpenOptions) -> Result<Box<dyn BlockIO>> 
     match magic {
         ciso::CISO_MAGIC => Ok(ciso::DiscIOCISO::new(path)?),
         nfs::NFS_MAGIC => match path.parent() {
-            Some(parent) if parent.is_dir() => {
-                Ok(nfs::DiscIONFS::new(path.parent().unwrap(), options)?)
-            }
+            Some(parent) if parent.is_dir() => Ok(nfs::DiscIONFS::new(path.parent().unwrap())?),
             _ => Err(Error::DiscFormat("Failed to locate NFS parent directory".to_string())),
         },
         wbfs::WBFS_MAGIC => Ok(wbfs::DiscIOWBFS::new(path)?),
-        wia::WIA_MAGIC | wia::RVZ_MAGIC => Ok(wia::DiscIOWIA::new(path, options)?),
+        wia::WIA_MAGIC | wia::RVZ_MAGIC => Ok(wia::DiscIOWIA::new(path)?),
         _ => Ok(iso::DiscIOISO::new(path)?),
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct BPartitionInfo {
-    pub index: u32,
+pub struct PartitionInfo {
+    pub index: usize,
     pub kind: PartitionKind,
     pub start_sector: u32,
     pub data_start_sector: u32,
@@ -99,13 +96,14 @@ pub enum Block {
 }
 
 impl Block {
+    /// Decrypts the block's data (if necessary) and writes it to the output buffer.
     pub(crate) fn decrypt(
         self,
         out: &mut [u8; SECTOR_SIZE],
         data: &[u8],
         block_idx: u32,
         abs_sector: u32,
-        partition: &BPartitionInfo,
+        partition: &PartitionInfo,
     ) -> io::Result<()> {
         let rel_sector = abs_sector - self.start_sector(block_idx, data.len());
         match self {
@@ -131,13 +129,14 @@ impl Block {
         Ok(())
     }
 
+    /// Encrypts the block's data (if necessary) and writes it to the output buffer.
     pub(crate) fn encrypt(
         self,
         out: &mut [u8; SECTOR_SIZE],
         data: &[u8],
         block_idx: u32,
         abs_sector: u32,
-        partition: &BPartitionInfo,
+        partition: &PartitionInfo,
     ) -> io::Result<()> {
         let rel_sector = abs_sector - self.start_sector(block_idx, data.len());
         match self {
@@ -165,6 +164,7 @@ impl Block {
         Ok(())
     }
 
+    /// Copies the block's raw data to the output buffer.
     pub(crate) fn copy_raw(
         self,
         out: &mut [u8; SECTOR_SIZE],
@@ -225,7 +225,7 @@ fn block_sector<const N: usize>(data: &[u8], sector_idx: u32) -> io::Result<&[u8
 fn generate_junk(
     out: &mut [u8; SECTOR_SIZE],
     sector: u32,
-    partition: Option<&BPartitionInfo>,
+    partition: Option<&PartitionInfo>,
     disc_header: &DiscHeader,
 ) {
     let mut pos = if let Some(partition) = partition {
@@ -248,7 +248,7 @@ fn generate_junk(
     }
 }
 
-fn rebuild_hash_block(out: &mut [u8; SECTOR_SIZE], sector: u32, partition: &BPartitionInfo) {
+fn rebuild_hash_block(out: &mut [u8; SECTOR_SIZE], sector: u32, partition: &PartitionInfo) {
     let Some(hash_table) = partition.hash_table.as_ref() else {
         return;
     };
@@ -264,14 +264,14 @@ fn rebuild_hash_block(out: &mut [u8; SECTOR_SIZE], sector: u32, partition: &BPar
     out[0x340..0x3E0].copy_from_slice(h2_hashes);
 }
 
-fn encrypt_sector(out: &mut [u8; SECTOR_SIZE], partition: &BPartitionInfo) {
+fn encrypt_sector(out: &mut [u8; SECTOR_SIZE], partition: &PartitionInfo) {
     aes_encrypt(&partition.key, [0u8; 16], &mut out[..HASHES_SIZE]);
     // Data IV from encrypted hash block
     let iv = *array_ref![out, 0x3D0, 16];
     aes_encrypt(&partition.key, iv, &mut out[HASHES_SIZE..]);
 }
 
-fn decrypt_sector(out: &mut [u8; SECTOR_SIZE], partition: &BPartitionInfo) {
+fn decrypt_sector(out: &mut [u8; SECTOR_SIZE], partition: &PartitionInfo) {
     // Data IV from encrypted hash block
     let iv = *array_ref![out, 0x3D0, 16];
     aes_decrypt(&partition.key, [0u8; 16], &mut out[..HASHES_SIZE]);

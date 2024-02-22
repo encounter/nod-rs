@@ -68,6 +68,7 @@ pub struct NKitHeader {
     pub xxhash64: Option<u64>,
     /// Bitstream of blocks that are junk data
     pub junk_bits: Option<Vec<u8>>,
+    pub block_size: u32,
 }
 
 const VERSION_PREFIX: [u8; 7] = *b"NKIT  v";
@@ -146,7 +147,7 @@ impl NKitHeader {
             None
         };
 
-        Ok(Self { version, flags, size, crc32, md5, sha1, xxhash64, junk_bits })
+        Ok(Self { version, flags, size, crc32, md5, sha1, xxhash64, junk_bits, block_size })
     }
 
     pub fn is_junk_block(&self, block: u32) -> Option<bool> {
@@ -155,19 +156,14 @@ impl NKitHeader {
             .and_then(|v| v.get((block / 8) as usize))
             .map(|&b| b & (1 << (7 - (block & 7))) != 0)
     }
-}
 
-impl From<&NKitHeader> for DiscMeta {
-    fn from(value: &NKitHeader) -> Self {
-        Self {
-            needs_hash_recovery: value.junk_bits.is_some(),
-            lossless: value.size.is_some() && value.junk_bits.is_some(),
-            disc_size: value.size,
-            crc32: value.crc32,
-            md5: value.md5,
-            sha1: value.sha1,
-            xxhash64: value.xxhash64,
-            ..Default::default()
-        }
+    pub fn apply(&self, meta: &mut DiscMeta) {
+        meta.needs_hash_recovery |= self.junk_bits.is_some();
+        meta.lossless |= self.size.is_some() && self.junk_bits.is_some();
+        meta.disc_size = meta.disc_size.or(self.size);
+        meta.crc32 = self.crc32;
+        meta.md5 = self.md5;
+        meta.sha1 = self.sha1;
+        meta.xxhash64 = self.xxhash64;
     }
 }

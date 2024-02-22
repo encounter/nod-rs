@@ -1,5 +1,7 @@
 //! Disc file format related logic (CISO, NFS, WBFS, WIA, etc.)
 
+use std::fmt;
+
 use crate::{streams::ReadStream, Result};
 
 pub(crate) mod block;
@@ -33,9 +35,75 @@ pub trait DiscIO: Send + Sync {
     fn disc_size(&self) -> Option<u64>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Format {
+    /// Raw ISO
+    #[default]
+    Iso,
+    /// CISO
+    Ciso,
+    /// NFS (Wii U VC)
+    Nfs,
+    /// RVZ
+    Rvz,
+    /// WBFS
+    Wbfs,
+    /// WIA
+    Wia,
+}
+
+impl fmt::Display for Format {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Format::Iso => write!(f, "ISO"),
+            Format::Ciso => write!(f, "CISO"),
+            Format::Nfs => write!(f, "NFS"),
+            Format::Rvz => write!(f, "RVZ"),
+            Format::Wbfs => write!(f, "WBFS"),
+            Format::Wia => write!(f, "WIA"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Compression {
+    /// No compression
+    #[default]
+    None,
+    /// Purge (WIA only)
+    Purge,
+    /// BZIP2
+    Bzip2,
+    /// LZMA
+    Lzma,
+    /// LZMA2
+    Lzma2,
+    /// Zstandard
+    Zstandard,
+}
+
+impl fmt::Display for Compression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Compression::None => write!(f, "None"),
+            Compression::Purge => write!(f, "Purge"),
+            Compression::Bzip2 => write!(f, "BZIP2"),
+            Compression::Lzma => write!(f, "LZMA"),
+            Compression::Lzma2 => write!(f, "LZMA2"),
+            Compression::Zstandard => write!(f, "Zstandard"),
+        }
+    }
+}
+
 /// Extra metadata about the underlying disc file format.
 #[derive(Debug, Clone, Default)]
 pub struct DiscMeta {
+    /// The disc file format.
+    pub format: Format,
+    /// The format's compression algorithm.
+    pub compression: Compression,
+    /// If the format uses blocks, the block size in bytes.
+    pub block_size: Option<u32>,
     /// Whether Wii partitions are stored decrypted in the format.
     pub decrypted: bool,
     /// Whether the format omits Wii partition data hashes.

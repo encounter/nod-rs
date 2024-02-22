@@ -11,13 +11,12 @@ use zerocopy::FromZeroes;
 use crate::{
     array_ref, array_ref_mut,
     disc::{
-        partition::PartitionReader,
         reader::DiscReader,
         wii::{HASHES_SIZE, SECTOR_DATA_SIZE},
     },
     io::HashBytes,
     util::read::read_box_slice,
-    Result, ResultContext, SECTOR_SIZE,
+    OpenOptions, Result, ResultContext, SECTOR_SIZE,
 };
 
 /// In a sector, following the 0x400 byte block of hashes, each 0x400 bytes of decrypted data is
@@ -88,8 +87,9 @@ pub fn rebuild_hashes(reader: &mut DiscReader) -> Result<()> {
         zero_h1_hash.update(zero_h0_hash);
     }
 
-    let mut hash_tables = Vec::with_capacity(reader.partitions.len());
-    for part in &reader.partitions {
+    let partitions = reader.partitions();
+    let mut hash_tables = Vec::with_capacity(partitions.len());
+    for part in partitions {
         let part_sectors = part.data_end_sector - part.data_start_sector;
         let hash_table = HashTable::new(part_sectors);
         log::debug!(
@@ -102,7 +102,7 @@ pub fn rebuild_hashes(reader: &mut DiscReader) -> Result<()> {
         let group_count = hash_table.h3_hashes.len();
         let mutex = Arc::new(Mutex::new(hash_table));
         (0..group_count).into_par_iter().try_for_each_with(
-            (PartitionReader::new(reader.io.clone(), part)?, mutex.clone()),
+            (reader.open_partition(part.index, &OpenOptions::default())?, mutex.clone()),
             |(stream, mutex), h3_index| -> Result<()> {
                 let mut result = HashResult::new_box_zeroed();
                 let mut data_buf = <u8>::new_box_slice_zeroed(SECTOR_DATA_SIZE);

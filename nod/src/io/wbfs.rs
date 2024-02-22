@@ -9,10 +9,10 @@ use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
 
 use crate::{
     io::{
-        block::{BPartitionInfo, Block, BlockIO},
+        block::{Block, BlockIO, PartitionInfo},
         nkit::NKitHeader,
         split::SplitFileReader,
-        DiscMeta, MagicBytes,
+        DiscMeta, Format, MagicBytes,
     },
     util::read::{read_box_slice, read_from},
     Error, Result, ResultContext,
@@ -113,7 +113,7 @@ impl BlockIO for DiscIOWBFS {
         &mut self,
         out: &mut [u8],
         block: u32,
-        _partition: Option<&BPartitionInfo>,
+        _partition: Option<&PartitionInfo>,
     ) -> io::Result<Option<Block>> {
         let block_size = self.header.block_size();
         if block >= self.header.max_blocks() {
@@ -134,7 +134,15 @@ impl BlockIO for DiscIOWBFS {
 
     fn block_size(&self) -> u32 { self.header.block_size() }
 
-    fn meta(&self) -> Result<DiscMeta> {
-        Ok(self.nkit_header.as_ref().map(DiscMeta::from).unwrap_or_default())
+    fn meta(&self) -> DiscMeta {
+        let mut result = DiscMeta {
+            format: Format::Wbfs,
+            block_size: Some(self.header.block_size()),
+            ..Default::default()
+        };
+        if let Some(nkit_header) = &self.nkit_header {
+            nkit_header.apply(&mut result);
+        }
+        result
     }
 }

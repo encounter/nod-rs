@@ -14,10 +14,10 @@ use crate::{
         SECTOR_SIZE,
     },
     io::{
-        block::{BPartitionInfo, Block, BlockIO},
+        block::{Block, BlockIO, PartitionInfo},
         nkit::NKitHeader,
         split::SplitFileReader,
-        HashBytes, KeyBytes, MagicBytes,
+        Compression, Format, HashBytes, KeyBytes, MagicBytes,
     },
     static_assert,
     util::{
@@ -26,7 +26,7 @@ use crate::{
         read::{read_box_slice, read_from, read_u16_be, read_vec},
         take_seek::TakeSeekExt,
     },
-    DiscMeta, Error, OpenOptions, Result, ResultContext,
+    DiscMeta, Error, Result, ResultContext,
 };
 
 pub const WIA_MAGIC: MagicBytes = *b"WIA\x01";
@@ -114,7 +114,7 @@ impl TryFrom<u32> for DiscType {
 
 /// Compression type
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Compression {
+pub enum WIACompression {
     /// No compression.
     None,
     /// (WIA only) See [WIASegment]
@@ -129,7 +129,7 @@ pub enum Compression {
     Zstandard,
 }
 
-impl TryFrom<u32> for Compression {
+impl TryFrom<u32> for WIACompression {
     type Error = Error;
 
     fn try_from(value: u32) -> Result<Self> {
@@ -161,7 +161,7 @@ pub struct WIADisc {
     ///
     /// RVZ only:
     /// > This is signed (instead of unsigned) to support negative compression levels in
-    ///   [Zstandard](Compression::Zstandard) (RVZ only).
+    ///   [Zstandard](WIACompression::Zstandard) (RVZ only).
     pub compression_level: I32,
     /// The size of the chunks that data is divided into.
     ///
@@ -208,14 +208,14 @@ pub struct WIADisc {
     pub compr_data_len: u8,
     /// Compressor specific data.
     ///
-    /// If the compression method is [None](Compression::None), [Purge](Compression::Purge),
-    /// [Bzip2](Compression::Bzip2), or [Zstandard](Compression::Zstandard) (RVZ only),
+    /// If the compression method is [None](WIACompression::None), [Purge](WIACompression::Purge),
+    /// [Bzip2](WIACompression::Bzip2), or [Zstandard](WIACompression::Zstandard) (RVZ only),
     /// [compr_data_len](Self::compr_data_len) is 0. If the compression method is
-    /// [Lzma](Compression::Lzma) or [Lzma2](Compression::Lzma2), the compressor specific data is
+    /// [Lzma](WIACompression::Lzma) or [Lzma2](WIACompression::Lzma2), the compressor specific data is
     /// stored in the format used by the 7-Zip SDK. It needs to be converted if you are using e.g.
     /// liblzma.
     ///
-    /// For [Lzma](Compression::Lzma), the data is 5 bytes long. The first byte encodes the `lc`,
+    /// For [Lzma](WIACompression::Lzma), the data is 5 bytes long. The first byte encodes the `lc`,
     /// `pb`, and `lp` parameters, and the four other bytes encode the dictionary size in little
     /// endian.
     pub compr_data: [u8; 7],
@@ -226,7 +226,7 @@ static_assert!(size_of::<WIADisc>() == 0xDC);
 impl WIADisc {
     pub fn validate(&self) -> Result<()> {
         DiscType::try_from(self.disc_type.get())?;
-        Compression::try_from(self.compression.get())?;
+        WIACompression::try_from(self.compression.get())?;
         if self.partition_type_size.get() != size_of::<WIAPartition>() as u32 {
             return Err(Error::DiscFormat(format!(
                 "WIA partition type size is {}, expected {}",
@@ -237,8 +237,8 @@ impl WIADisc {
         Ok(())
     }
 
-    pub fn compression(&self) -> Compression {
-        Compression::try_from(self.compression.get()).unwrap()
+    pub fn compression(&self) -> WIACompression {
+        WIACompression::try_from(self.compression.get()).unwrap()
     }
 }
 
@@ -428,8 +428,8 @@ pub struct WIAException {
 ///
 /// For memory management reasons, programs which read WIA files might place a limit on how many
 /// exceptions there can be in a [WIAExceptionList]. Dolphin's reading code has a limit of
-/// `52 × 64 = 3328` (unless the compression method is [None](Compression::None) or
-/// [Purge](Compression::Purge), in which case there is no limit), which is enough to cover all
+/// `52 × 64 = 3328` (unless the compression method is [None](WIACompression::None) or
+/// [Purge](WIACompression::Purge), in which case there is no limit), which is enough to cover all
 /// hashes and all padding. wit's reading code seems to be written as if `47 × 64 = 3008` is the
 /// maximum it needs to be able to handle, which is enough to cover all hashes but not any padding.
 /// However, because wit allocates more memory than needed, it seems to be possible to exceed 3008
@@ -438,12 +438,12 @@ pub struct WIAException {
 ///
 /// Somewhat ironically, there are exceptions to how [WIAExceptionList] structs are handled:
 ///
-/// For the compression method [Purge](Compression::Purge), the [WIAExceptionList] structs are
+/// For the compression method [Purge](WIACompression::Purge), the [WIAExceptionList] structs are
 /// stored uncompressed (in other words, before the first [WIASegment]). For
-/// [Bzip2](Compression::Bzip2), [Lzma](Compression::Lzma) and [Lzma2](Compression::Lzma2), they are
+/// [Bzip2](WIACompression::Bzip2), [Lzma](WIACompression::Lzma) and [Lzma2](WIACompression::Lzma2), they are
 /// compressed along with the rest of the data.
 ///
-/// For the compression methods [None](Compression::None) and [Purge](Compression::Purge), if the
+/// For the compression methods [None](WIACompression::None) and [Purge](WIACompression::Purge), if the
 /// end offset of the last [WIAExceptionList] is not evenly divisible by 4, padding is inserted
 /// after it so that the data afterwards will start at a 4 byte boundary. This padding is not
 /// inserted for the other compression methods.
@@ -466,15 +466,15 @@ impl Decompressor {
     pub fn new(disc: &WIADisc) -> Result<Self> {
         let data = &disc.compr_data[..disc.compr_data_len as usize];
         match disc.compression() {
-            Compression::None => Ok(Self::None),
+            WIACompression::None => Ok(Self::None),
             #[cfg(feature = "compress-bzip2")]
-            Compression::Bzip2 => Ok(Self::Bzip2),
+            WIACompression::Bzip2 => Ok(Self::Bzip2),
             #[cfg(feature = "compress-lzma")]
-            Compression::Lzma => Ok(Self::Lzma(Box::from(data))),
+            WIACompression::Lzma => Ok(Self::Lzma(Box::from(data))),
             #[cfg(feature = "compress-lzma")]
-            Compression::Lzma2 => Ok(Self::Lzma2(Box::from(data))),
+            WIACompression::Lzma2 => Ok(Self::Lzma2(Box::from(data))),
             #[cfg(feature = "compress-zstd")]
-            Compression::Zstandard => Ok(Self::Zstandard),
+            WIACompression::Zstandard => Ok(Self::Zstandard),
             comp => Err(Error::DiscFormat(format!("Unsupported WIA/RVZ compression: {:?}", comp))),
         }
     }
@@ -556,7 +556,7 @@ fn verify_hash(buf: &[u8], expected: &HashBytes) -> Result<()> {
 }
 
 impl DiscIOWIA {
-    pub fn new(filename: &Path, _options: &OpenOptions) -> Result<Box<Self>> {
+    pub fn new(filename: &Path) -> Result<Box<Self>> {
         let mut inner = SplitFileReader::new(filename)?;
 
         // Load & verify file header
@@ -690,7 +690,7 @@ impl BlockIO for DiscIOWIA {
         &mut self,
         out: &mut [u8],
         sector: u32,
-        partition: Option<&BPartitionInfo>,
+        partition: Option<&PartitionInfo>,
     ) -> io::Result<Option<Block>> {
         let mut chunk_size = self.disc.chunk_size.get();
         let sectors_per_chunk = chunk_size / SECTOR_SIZE as u32;
@@ -705,7 +705,7 @@ impl BlockIO for DiscIOWIA {
 
         let (group_index, group_sector) = if let Some(partition) = partition {
             // Find the partition
-            let Some(wia_part) = self.partitions.get(partition.index as usize) else {
+            let Some(wia_part) = self.partitions.get(partition.index) else {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     format!("Couldn't find WIA/RVZ partition index {}", partition.index),
@@ -803,7 +803,7 @@ impl BlockIO for DiscIOWIA {
 
             let mut reader = (&mut self.inner).take_seek(group.data_size() as u64);
             let uncompressed_exception_lists =
-                matches!(self.disc.compression(), Compression::None | Compression::Purge)
+                matches!(self.disc.compression(), WIACompression::None | WIACompression::Purge)
                     || !group.is_compressed();
             if uncompressed_exception_lists {
                 self.exception_lists = read_exception_lists(
@@ -891,12 +891,27 @@ impl BlockIO for DiscIOWIA {
         SECTOR_SIZE as u32
     }
 
-    fn meta(&self) -> Result<DiscMeta> {
-        let mut meta = self.nkit_header.as_ref().map(DiscMeta::from).unwrap_or_default();
-        meta.decrypted = true;
-        meta.needs_hash_recovery = true;
-        meta.lossless = true;
-        meta.disc_size = Some(self.header.iso_file_size.get());
-        Ok(meta)
+    fn meta(&self) -> DiscMeta {
+        let mut result = DiscMeta {
+            format: if self.header.is_rvz() { Format::Rvz } else { Format::Wia },
+            block_size: Some(self.disc.chunk_size.get()),
+            compression: match self.disc.compression() {
+                WIACompression::None => Compression::None,
+                WIACompression::Purge => Compression::Purge,
+                WIACompression::Bzip2 => Compression::Bzip2,
+                WIACompression::Lzma => Compression::Lzma,
+                WIACompression::Lzma2 => Compression::Lzma2,
+                WIACompression::Zstandard => Compression::Zstandard,
+            },
+            decrypted: true,
+            needs_hash_recovery: true,
+            lossless: true,
+            disc_size: Some(self.header.iso_file_size.get()),
+            ..Default::default()
+        };
+        if let Some(nkit_header) = &self.nkit_header {
+            nkit_header.apply(&mut result);
+        }
+        result
     }
 }
