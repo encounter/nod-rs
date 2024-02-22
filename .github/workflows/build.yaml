@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        toolchain: [ stable, 1.59.0, nightly ]
+        toolchain: [ stable, 1.73.0, nightly ]
       fail-fast: false
     env:
       RUSTFLAGS: -D warnings
