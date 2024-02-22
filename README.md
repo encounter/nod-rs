@@ -1,6 +1,6 @@
 # nod-rs [![Build Status]][actions] [![Latest Version]][crates.io] [![Api Rustdoc]][rustdoc] ![Rust Version]
 
-[Build Status]: https://github.com/encounter/nod-rs/workflows/build/badge.svg
+[Build Status]: https://github.com/encounter/nod-rs/actions/workflows/build.yaml/badge.svg
 [actions]: https://github.com/encounter/nod-rs/actions
 [Latest Version]: https://img.shields.io/crates/v/nod.svg
 [crates.io]: https://crates.io/crates/nod
@@ -53,6 +53,14 @@ Converts any supported format to raw ISO.
 ```shell
 nodtool convert /path/to/game.wia /path/to/game.iso
 ``` 
+
+### verify
+
+Hashes the contents of a disc image and verifies it.
+
+```shell
+nodtool verify /path/to/game.iso
+```
 
 ## Library example
 
