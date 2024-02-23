@@ -118,7 +118,7 @@ impl PartitionBase for PartitionGC {
 
     fn open_file(&mut self, node: &Node) -> io::Result<SharedWindowedReadStream> {
         assert_eq!(node.kind(), NodeKind::File);
-        self.new_window(node.offset(false), node.length(false))
+        self.new_window(node.offset(false), node.length())
     }
 
     fn ideal_buffer_size(&self) -> usize { SECTOR_SIZE }

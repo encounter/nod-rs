@@ -59,7 +59,7 @@ pub struct DiscIOWBFS {
     /// WBFS header
     header: WBFSHeader,
     /// Map of Wii LBAs to WBFS LBAs
-    block_table: Box<[U16]>,
+    block_map: Box<[U16]>,
     /// Optional NKit header
     nkit_header: Option<NKitHeader>,
 }
@@ -91,11 +91,11 @@ impl DiscIOWBFS {
             return Err(Error::DiscFormat("Only single WBFS discs are supported".to_string()));
         }
 
-        // Read WBFS LBA table
+        // Read WBFS LBA map
         inner
             .seek(SeekFrom::Start(header.sector_size() as u64 + DISC_HEADER_SIZE as u64))
             .context("Seeking to WBFS LBA table")?; // Skip header
-        let block_table: Box<[U16]> = read_box_slice(&mut inner, header.max_blocks() as usize)
+        let block_map: Box<[U16]> = read_box_slice(&mut inner, header.max_blocks() as usize)
             .context("Reading WBFS LBA table")?;
 
         // Read NKit header if present (always at 0x10000)
@@ -104,7 +104,7 @@ impl DiscIOWBFS {
 
         // Reset reader
         inner.reset();
-        Ok(Box::new(Self { inner, header, block_table, nkit_header }))
+        Ok(Box::new(Self { inner, header, block_map, nkit_header }))
     }
 }
 
@@ -120,16 +120,20 @@ impl BlockIO for DiscIOWBFS {
             return Ok(Block::Zero);
         }
 
-        // Check if block is junk data
-        if self.nkit_header.as_ref().and_then(|h| h.is_junk_block(block)).unwrap_or(false) {
-            return Ok(Block::Junk);
+        // Find the block in the map
+        let phys_block = self.block_map[block as usize].get();
+        if phys_block == 0 {
+            // Check if block is junk data
+            if self.nkit_header.as_ref().and_then(|h| h.is_junk_block(block)).unwrap_or(false) {
+                return Ok(Block::Junk);
+            }
+
+            // Otherwise, read zeroes
+            return Ok(Block::Zero);
         }
 
         // Read block
-        let block_start = block_size as u64 * self.block_table[block as usize].get() as u64;
-        if block_start == 0 {
-            return Ok(Block::Zero);
-        }
+        let block_start = block_size as u64 * phys_block as u64;
         self.inner.seek(SeekFrom::Start(block_start))?;
         self.inner.read_exact(out)?;
         Ok(Block::Raw)

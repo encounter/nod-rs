@@ -102,7 +102,7 @@ impl BlockIO for DiscIOCISO {
         let phys_block = self.block_map[block as usize];
         if phys_block == u16::MAX {
             // Check if block is junk data
-            if self.nkit_header.as_ref().is_some_and(|h| h.is_junk_block(block).unwrap_or(false)) {
+            if self.nkit_header.as_ref().and_then(|h| h.is_junk_block(block)).unwrap_or(false) {
                 return Ok(Block::Junk);
             };
 

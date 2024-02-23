@@ -31,7 +31,7 @@ use size::{Base, Size};
 use supports_color::Stream;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
-use zerocopy::FromZeroes;
+use zerocopy::{AsBytes, FromZeroes};
 
 #[derive(FromArgs, Debug)]
 /// Tool for reading GameCube and Wii disc images.
@@ -543,44 +543,46 @@ fn extract(args: ExtractArgs) -> Result<()> {
         rebuild_encryption: false,
         validate_hashes: args.validate,
     })?;
-    let is_wii = disc.header().is_wii();
+    let header = disc.header();
+    let is_wii = header.is_wii();
     if let Some(partition) = args.partition {
         if partition.eq_ignore_ascii_case("all") {
             for info in disc.partitions() {
                 let mut out_dir = output_dir.clone();
                 out_dir.push(info.kind.dir_name().as_ref());
                 let mut partition = disc.open_partition(info.index)?;
-                extract_partition(partition.as_mut(), &out_dir, is_wii, args.quiet)?;
+                extract_partition(header, partition.as_mut(), &out_dir, is_wii, args.quiet)?;
             }
         } else if partition.eq_ignore_ascii_case("data") {
             let mut partition = disc.open_partition_kind(PartitionKind::Data)?;
-            extract_partition(partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+            extract_partition(header, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
         } else if partition.eq_ignore_ascii_case("update") {
             let mut partition = disc.open_partition_kind(PartitionKind::Update)?;
-            extract_partition(partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+            extract_partition(header, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
         } else if partition.eq_ignore_ascii_case("channel") {
             let mut partition = disc.open_partition_kind(PartitionKind::Channel)?;
-            extract_partition(partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+            extract_partition(header, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
         } else {
             let idx = partition.parse::<usize>().map_err(|_| "Invalid partition index")?;
             let mut partition = disc.open_partition(idx)?;
-            extract_partition(partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+            extract_partition(header, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
         }
     } else {
         let mut partition = disc.open_partition_kind(PartitionKind::Data)?;
-        extract_partition(partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+        extract_partition(header, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
     }
     Ok(())
 }
 
 fn extract_partition(
+    header: &DiscHeader,
     partition: &mut dyn PartitionBase,
     out_dir: &Path,
     is_wii: bool,
     quiet: bool,
 ) -> Result<()> {
     let meta = partition.meta()?;
-    extract_sys_files(meta.as_ref(), out_dir, quiet)?;
+    extract_sys_files(header, meta.as_ref(), out_dir, quiet)?;
 
     // Extract FST
     let files_dir = out_dir.join("files");
@@ -601,7 +603,7 @@ fn extract_partition(
         path_segments.truncate(new_size);
 
         // Add the new path segment
-        let end = if node.is_dir() { node.length(false) as usize } else { idx + 1 };
+        let end = if node.is_dir() { node.length() as usize } else { idx + 1 };
         path_segments.push((name?, end));
 
         let path = path_segments.iter().map(|(name, _)| name.as_ref()).join("/");
@@ -615,7 +617,12 @@ fn extract_partition(
     Ok(())
 }
 
-fn extract_sys_files(data: &PartitionMeta, out_dir: &Path, quiet: bool) -> Result<()> {
+fn extract_sys_files(
+    header: &DiscHeader,
+    data: &PartitionMeta,
+    out_dir: &Path,
+    quiet: bool,
+) -> Result<()> {
     let sys_dir = out_dir.join("sys");
     fs::create_dir_all(&sys_dir)
         .with_context(|| format!("Creating directory {}", display(&sys_dir)))?;
@@ -626,6 +633,12 @@ fn extract_sys_files(data: &PartitionMeta, out_dir: &Path, quiet: bool) -> Resul
     extract_file(data.raw_dol.as_ref(), &sys_dir.join("main.dol"), quiet)?;
 
     // Wii files
+    if header.is_wii() {
+        let disc_dir = out_dir.join("disc");
+        fs::create_dir_all(&disc_dir)
+            .with_context(|| format!("Creating directory {}", display(&disc_dir)))?;
+        extract_file(&header.as_bytes()[..0x100], &disc_dir.join("header.bin"), quiet)?;
+    }
     if let Some(ticket) = data.raw_ticket.as_deref() {
         extract_file(ticket, &out_dir.join("ticket.bin"), quiet)?;
     }
@@ -666,7 +679,7 @@ fn extract_node(
         println!(
             "Extracting {} (size: {})",
             display(&file_path),
-            Size::from_bytes(node.length(is_wii)).format().with_base(Base::Base10)
+            Size::from_bytes(node.length()).format().with_base(Base::Base10)
         );
     }
     let file = File::create(&file_path)
@@ -677,7 +690,7 @@ fn extract_node(
             "Opening file {} on disc for reading (offset {}, size {})",
             name,
             node.offset(is_wii),
-            node.length(is_wii)
+            node.length()
         )
     })?;
     io::copy(&mut r, &mut w).with_context(|| format!("Extracting file {}", display(&file_path)))?;

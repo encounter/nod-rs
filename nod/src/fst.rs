@@ -63,18 +63,12 @@ impl Node {
         }
     }
 
-    /// For files, this is the byte size of the file. (Wii: >> 2)
+    /// For files, this is the byte size of the file.
     ///
     /// For directories, this is the child end index in the FST.
     ///
     /// Number of child files and directories recursively is `length - offset`.
-    pub fn length(&self, is_wii: bool) -> u64 {
-        if is_wii && self.kind == 0 {
-            self.length.get() as u64 * 4
-        } else {
-            self.length.get() as u64
-        }
-    }
+    pub fn length(&self) -> u64 { self.length.get() as u64 }
 }
 
 /// A view into the file system tree (FST).
@@ -90,7 +84,7 @@ impl<'a> Fst<'a> {
             return Err("FST root node not found");
         };
         // String table starts after the last node
-        let string_base = root_node.length(false) * size_of::<Node>() as u64;
+        let string_base = root_node.length() * size_of::<Node>() as u64;
         if string_base >= buf.len() as u64 {
             return Err("FST string table out of bounds");
         }
@@ -137,10 +131,10 @@ impl<'a> Fst<'a> {
                 }
                 // Descend into directory
                 idx += 1;
-                stop_at = Some(node.length(false) as usize + idx);
+                stop_at = Some(node.length() as usize + idx);
             } else if node.is_dir() {
                 // Skip directory
-                idx = node.length(false) as usize;
+                idx = node.length() as usize;
             } else {
                 // Skip file
                 idx += 1;
