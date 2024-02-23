@@ -5,11 +5,11 @@ use std::{
     path::Path,
 };
 
-use sha1::{Digest, Sha1};
 use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
 
 use crate::{
     disc::{
+        hashes::hash_bytes,
         wii::{HASHES_SIZE, SECTOR_DATA_SIZE},
         SECTOR_SIZE,
     },
@@ -533,13 +533,6 @@ impl Clone for DiscIOWIA {
     }
 }
 
-#[inline]
-fn hash_bytes(buf: &[u8]) -> HashBytes {
-    let mut hasher = Sha1::new();
-    hasher.update(buf);
-    hasher.finalize().into()
-}
-
 fn verify_hash(buf: &[u8], expected: &HashBytes) -> Result<()> {
     let out = hash_bytes(buf);
     if out != *expected {
@@ -686,12 +679,12 @@ where
 }
 
 impl BlockIO for DiscIOWIA {
-    fn read_block(
+    fn read_block_internal(
         &mut self,
         out: &mut [u8],
         sector: u32,
         partition: Option<&PartitionInfo>,
-    ) -> io::Result<Option<Block>> {
+    ) -> io::Result<Block> {
         let mut chunk_size = self.disc.chunk_size.get();
         let sectors_per_chunk = chunk_size / SECTOR_SIZE as u32;
         let disc_offset = sector as u64 * SECTOR_SIZE as u64;
@@ -792,7 +785,7 @@ impl BlockIO for DiscIOWIA {
         // Special case for all-zero data
         if group.data_size() == 0 {
             self.exception_lists.clear();
-            return Ok(Some(Block::Zero));
+            return Ok(Block::Zero);
         }
 
         // Read group data if necessary
@@ -875,17 +868,17 @@ impl BlockIO for DiscIOWIA {
                 &self.group_data[sector_data_start..sector_data_start + SECTOR_DATA_SIZE];
             out[..HASHES_SIZE].fill(0);
             out[HASHES_SIZE..SECTOR_SIZE].copy_from_slice(sector_data);
-            Ok(Some(Block::PartDecrypted { has_hashes: false }))
+            Ok(Block::PartDecrypted { has_hashes: false })
         } else {
             let sector_data_start = group_sector as usize * SECTOR_SIZE;
             out.copy_from_slice(
                 &self.group_data[sector_data_start..sector_data_start + SECTOR_SIZE],
             );
-            Ok(Some(Block::Raw))
+            Ok(Block::Raw)
         }
     }
 
-    fn block_size(&self) -> u32 {
+    fn block_size_internal(&self) -> u32 {
         // WIA/RVZ chunks aren't always the full size, so we'll consider the
         // block size to be one sector, and handle the complexity ourselves.
         SECTOR_SIZE as u32

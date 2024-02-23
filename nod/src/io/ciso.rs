@@ -23,33 +23,23 @@ use crate::{
 pub const CISO_MAGIC: MagicBytes = *b"CISO";
 pub const CISO_MAP_SIZE: usize = SECTOR_SIZE - 8;
 
+/// CISO header (little endian)
 #[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
 struct CISOHeader {
     magic: MagicBytes,
-    // little endian
     block_size: U32,
     block_present: [u8; CISO_MAP_SIZE],
 }
 
 static_assert!(size_of::<CISOHeader>() == SECTOR_SIZE);
 
+#[derive(Clone)]
 pub struct DiscIOCISO {
     inner: SplitFileReader,
     header: CISOHeader,
     block_map: [u16; CISO_MAP_SIZE],
     nkit_header: Option<NKitHeader>,
-}
-
-impl Clone for DiscIOCISO {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            header: self.header.clone(),
-            block_map: self.block_map,
-            nkit_header: self.nkit_header.clone(),
-        }
-    }
 }
 
 impl DiscIOCISO {
@@ -97,15 +87,15 @@ impl DiscIOCISO {
 }
 
 impl BlockIO for DiscIOCISO {
-    fn read_block(
+    fn read_block_internal(
         &mut self,
         out: &mut [u8],
         block: u32,
         _partition: Option<&PartitionInfo>,
-    ) -> io::Result<Option<Block>> {
+    ) -> io::Result<Block> {
         if block >= CISO_MAP_SIZE as u32 {
             // Out of bounds
-            return Ok(None);
+            return Ok(Block::Zero);
         }
 
         // Find the block in the map
@@ -113,11 +103,11 @@ impl BlockIO for DiscIOCISO {
         if phys_block == u16::MAX {
             // Check if block is junk data
             if self.nkit_header.as_ref().is_some_and(|h| h.is_junk_block(block).unwrap_or(false)) {
-                return Ok(Some(Block::Junk));
+                return Ok(Block::Junk);
             };
 
             // Otherwise, read zeroes
-            return Ok(Some(Block::Zero));
+            return Ok(Block::Zero);
         }
 
         // Read block
@@ -125,10 +115,10 @@ impl BlockIO for DiscIOCISO {
             + phys_block as u64 * self.header.block_size.get() as u64;
         self.inner.seek(SeekFrom::Start(file_offset))?;
         self.inner.read_exact(out)?;
-        Ok(Some(Block::Raw))
+        Ok(Block::Raw)
     }
 
-    fn block_size(&self) -> u32 { self.header.block_size.get() }
+    fn block_size_internal(&self) -> u32 { self.header.block_size.get() }
 
     fn meta(&self) -> DiscMeta {
         let mut result = DiscMeta {

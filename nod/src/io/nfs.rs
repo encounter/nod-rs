@@ -83,24 +83,13 @@ impl NFSHeader {
     }
 }
 
+#[derive(Clone)]
 pub struct DiscIONFS {
     inner: SplitFileReader,
     header: NFSHeader,
     raw_size: u64,
     disc_size: u64,
     key: KeyBytes,
-}
-
-impl Clone for DiscIONFS {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            header: self.header.clone(),
-            raw_size: self.raw_size,
-            disc_size: self.disc_size,
-            key: self.key,
-        }
-    }
 }
 
 impl DiscIONFS {
@@ -118,17 +107,17 @@ impl DiscIONFS {
 }
 
 impl BlockIO for DiscIONFS {
-    fn read_block(
+    fn read_block_internal(
         &mut self,
         out: &mut [u8],
         sector: u32,
         partition: Option<&PartitionInfo>,
-    ) -> io::Result<Option<Block>> {
+    ) -> io::Result<Block> {
         // Calculate physical sector
         let phys_sector = self.header.phys_sector(sector);
         if phys_sector == u32::MAX {
             // Logical zero sector
-            return Ok(Some(Block::Zero));
+            return Ok(Block::Zero);
         }
 
         // Read sector
@@ -146,13 +135,13 @@ impl BlockIO for DiscIONFS {
         aes_decrypt(&self.key, iv, out);
 
         if partition.is_some() {
-            Ok(Some(Block::PartDecrypted { has_hashes: true }))
+            Ok(Block::PartDecrypted { has_hashes: true })
         } else {
-            Ok(Some(Block::Raw))
+            Ok(Block::Raw)
         }
     }
 
-    fn block_size(&self) -> u32 { SECTOR_SIZE as u32 }
+    fn block_size_internal(&self) -> u32 { SECTOR_SIZE as u32 }
 
     fn meta(&self) -> DiscMeta {
         DiscMeta { format: Format::Nfs, decrypted: true, ..Default::default() }

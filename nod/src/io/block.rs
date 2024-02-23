@@ -10,7 +10,7 @@ use crate::{
         wii::{WiiPartitionHeader, HASHES_SIZE, SECTOR_DATA_SIZE},
         SECTOR_SIZE,
     },
-    io::{aes_decrypt, aes_encrypt, ciso, iso, nfs, wbfs, wia, KeyBytes, MagicBytes},
+    io::{aes_decrypt, aes_encrypt, KeyBytes, MagicBytes},
     util::{lfg::LaggedFibonacci, read::read_from},
     DiscHeader, DiscMeta, Error, PartitionHeader, PartitionKind, Result, ResultContext,
 };
@@ -18,15 +18,59 @@ use crate::{
 /// Block I/O trait for reading disc images.
 pub trait BlockIO: DynClone + Send + Sync {
     /// Reads a block from the disc image.
+    fn read_block_internal(
+        &mut self,
+        out: &mut [u8],
+        block: u32,
+        partition: Option<&PartitionInfo>,
+    ) -> io::Result<Block>;
+
+    /// Reads a full block from the disc image, combining smaller blocks if necessary.
     fn read_block(
         &mut self,
         out: &mut [u8],
         block: u32,
         partition: Option<&PartitionInfo>,
-    ) -> io::Result<Option<Block>>;
+    ) -> io::Result<Block> {
+        let block_size_internal = self.block_size_internal();
+        let block_size = self.block_size();
+        if block_size_internal == block_size {
+            self.read_block_internal(out, block, partition)
+        } else {
+            let mut offset = 0usize;
+            let mut result = None;
+            let mut block_idx =
+                ((block as u64 * block_size as u64) / block_size_internal as u64) as u32;
+            while offset < block_size as usize {
+                let block = self.read_block_internal(
+                    &mut out[offset..offset + block_size_internal as usize],
+                    block_idx,
+                    partition,
+                )?;
+                if result.is_none() {
+                    result = Some(block);
+                } else if result != Some(block) {
+                    if block == Block::Zero {
+                        out[offset..offset + block_size_internal as usize].fill(0);
+                    } else {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Inconsistent block types in split block",
+                        ));
+                    }
+                }
+                offset += block_size_internal as usize;
+                block_idx += 1;
+            }
+            Ok(result.unwrap_or_default())
+        }
+    }
 
-    /// The format's block size in bytes. Must be a multiple of the sector size (0x8000).
-    fn block_size(&self) -> u32;
+    /// The format's block size in bytes. Can be smaller than the sector size (0x8000).
+    fn block_size_internal(&self) -> u32;
+
+    /// The block size used for processing. Must be a multiple of the sector size (0x8000).
+    fn block_size(&self) -> u32 { self.block_size_internal().max(SECTOR_SIZE as u32) }
 
     /// Returns extra metadata included in the disc file format, if any.
     fn meta(&self) -> DiscMeta;
@@ -54,16 +98,41 @@ pub fn open(filename: &Path) -> Result<Box<dyn BlockIO>> {
         read_from(&mut file)
             .with_context(|| format!("Reading magic bytes from {}", filename.display()))?
     };
-    match magic {
-        ciso::CISO_MAGIC => Ok(ciso::DiscIOCISO::new(path)?),
-        nfs::NFS_MAGIC => match path.parent() {
-            Some(parent) if parent.is_dir() => Ok(nfs::DiscIONFS::new(path.parent().unwrap())?),
-            _ => Err(Error::DiscFormat("Failed to locate NFS parent directory".to_string())),
+    let io: Box<dyn BlockIO> = match magic {
+        crate::io::ciso::CISO_MAGIC => crate::io::ciso::DiscIOCISO::new(path)?,
+        #[cfg(feature = "compress-zlib")]
+        crate::io::gcz::GCZ_MAGIC => crate::io::gcz::DiscIOGCZ::new(path)?,
+        crate::io::nfs::NFS_MAGIC => match path.parent() {
+            Some(parent) if parent.is_dir() => {
+                crate::io::nfs::DiscIONFS::new(path.parent().unwrap())?
+            }
+            _ => {
+                return Err(Error::DiscFormat("Failed to locate NFS parent directory".to_string()));
+            }
         },
-        wbfs::WBFS_MAGIC => Ok(wbfs::DiscIOWBFS::new(path)?),
-        wia::WIA_MAGIC | wia::RVZ_MAGIC => Ok(wia::DiscIOWIA::new(path)?),
-        _ => Ok(iso::DiscIOISO::new(path)?),
+        crate::io::wbfs::WBFS_MAGIC => crate::io::wbfs::DiscIOWBFS::new(path)?,
+        crate::io::wia::WIA_MAGIC | crate::io::wia::RVZ_MAGIC => {
+            crate::io::wia::DiscIOWIA::new(path)?
+        }
+        _ => crate::io::iso::DiscIOISO::new(path)?,
+    };
+    if io.block_size_internal() < SECTOR_SIZE as u32
+        && SECTOR_SIZE as u32 % io.block_size_internal() != 0
+    {
+        return Err(Error::DiscFormat(format!(
+            "Sector size {} is not divisible by block size {}",
+            SECTOR_SIZE,
+            io.block_size_internal(),
+        )));
     }
+    if io.block_size() % SECTOR_SIZE as u32 != 0 {
+        return Err(Error::DiscFormat(format!(
+            "Block size {} is not a multiple of sector size {}",
+            io.block_size(),
+            SECTOR_SIZE
+        )));
+    }
+    Ok(io)
 }
 
 #[derive(Debug, Clone)]
@@ -80,7 +149,7 @@ pub struct PartitionInfo {
     pub hash_table: Option<HashTable>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Block {
     /// Raw data or encrypted Wii partition data
     Raw,
@@ -92,6 +161,7 @@ pub enum Block {
     /// Wii partition junk data
     Junk,
     /// All zeroes
+    #[default]
     Zero,
 }
 

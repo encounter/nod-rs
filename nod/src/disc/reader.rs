@@ -27,7 +27,7 @@ pub enum EncryptionMode {
 
 pub struct DiscReader {
     io: Box<dyn BlockIO>,
-    block: Option<Block>,
+    block: Block,
     block_buf: Box<[u8]>,
     block_idx: u32,
     sector_buf: Box<[u8; SECTOR_SIZE]>,
@@ -43,7 +43,7 @@ impl Clone for DiscReader {
     fn clone(&self) -> Self {
         Self {
             io: self.io.clone(),
-            block: None,
+            block: Block::default(),
             block_buf: <u8>::new_box_slice_zeroed(self.block_buf.len()),
             block_idx: u32::MAX,
             sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed(),
@@ -63,7 +63,7 @@ impl DiscReader {
         let meta = inner.meta();
         let mut reader = Self {
             io: inner,
-            block: None,
+            block: Block::default(),
             block_buf: <u8>::new_box_slice_zeroed(block_size as usize),
             block_idx: u32::MAX,
             sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed(),
@@ -92,7 +92,7 @@ impl DiscReader {
     }
 
     pub fn reset(&mut self) {
-        self.block = None;
+        self.block = Block::default();
         self.block_buf.fill(0);
         self.block_idx = u32::MAX;
         self.sector_buf.fill(0);
@@ -171,19 +171,16 @@ impl Read for DiscReader {
 
         // Read new sector into buffer
         if abs_sector != self.sector_idx {
-            let Some(block) = &self.block else {
-                return Ok(0);
-            };
             if let Some(partition) = partition {
                 match self.mode {
-                    EncryptionMode::Decrypted => block.decrypt(
+                    EncryptionMode::Decrypted => self.block.decrypt(
                         self.sector_buf.as_mut(),
                         self.block_buf.as_ref(),
                         block_idx,
                         abs_sector,
                         partition,
                     )?,
-                    EncryptionMode::Encrypted => block.encrypt(
+                    EncryptionMode::Encrypted => self.block.encrypt(
                         self.sector_buf.as_mut(),
                         self.block_buf.as_ref(),
                         block_idx,
@@ -192,7 +189,7 @@ impl Read for DiscReader {
                     )?,
                 }
             } else {
-                block.copy_raw(
+                self.block.copy_raw(
                     self.sector_buf.as_mut(),
                     self.block_buf.as_ref(),
                     block_idx,

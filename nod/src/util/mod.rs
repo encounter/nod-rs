@@ -17,7 +17,7 @@ where T: Div<Output = T> + Rem<Output = T> + Copy {
 #[macro_export]
 macro_rules! array_ref {
     ($slice:expr, $offset:expr, $size:expr) => {{
-        #[inline]
+        #[inline(always)]
         fn to_array<T>(slice: &[T]) -> &[T; $size] {
             unsafe { &*(slice.as_ptr() as *const [_; $size]) }
         }
@@ -29,7 +29,7 @@ macro_rules! array_ref {
 #[macro_export]
 macro_rules! array_ref_mut {
     ($slice:expr, $offset:expr, $size:expr) => {{
-        #[inline]
+        #[inline(always)]
         fn to_array<T>(slice: &mut [T]) -> &mut [T; $size] {
             unsafe { &mut *(slice.as_ptr() as *mut [_; $size]) }
         }

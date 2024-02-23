@@ -4,6 +4,8 @@ use std::fmt;
 
 pub(crate) mod block;
 pub(crate) mod ciso;
+#[cfg(feature = "compress-zlib")]
+pub(crate) mod gcz;
 pub(crate) mod iso;
 pub(crate) mod nfs;
 pub(crate) mod nkit;
@@ -27,6 +29,8 @@ pub enum Format {
     Iso,
     /// CISO
     Ciso,
+    /// GCZ
+    Gcz,
     /// NFS (Wii U VC)
     Nfs,
     /// RVZ
@@ -42,6 +46,7 @@ impl fmt::Display for Format {
         match self {
             Format::Iso => write!(f, "ISO"),
             Format::Ciso => write!(f, "CISO"),
+            Format::Gcz => write!(f, "GCZ"),
             Format::Nfs => write!(f, "NFS"),
             Format::Rvz => write!(f, "RVZ"),
             Format::Wbfs => write!(f, "WBFS"),
@@ -55,14 +60,16 @@ pub enum Compression {
     /// No compression
     #[default]
     None,
-    /// Purge (WIA only)
-    Purge,
     /// BZIP2
     Bzip2,
+    /// Deflate (GCZ only)
+    Deflate,
     /// LZMA
     Lzma,
     /// LZMA2
     Lzma2,
+    /// Purge (WIA only)
+    Purge,
     /// Zstandard
     Zstandard,
 }
@@ -71,10 +78,11 @@ impl fmt::Display for Compression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Compression::None => write!(f, "None"),
-            Compression::Purge => write!(f, "Purge"),
             Compression::Bzip2 => write!(f, "BZIP2"),
+            Compression::Deflate => write!(f, "Deflate"),
             Compression::Lzma => write!(f, "LZMA"),
             Compression::Lzma2 => write!(f, "LZMA2"),
+            Compression::Purge => write!(f, "Purge"),
             Compression::Zstandard => write!(f, "Zstandard"),
         }
     }
@@ -108,6 +116,7 @@ pub struct DiscMeta {
 }
 
 /// Encrypts data in-place using AES-128-CBC with the given key and IV.
+#[inline(always)]
 pub(crate) fn aes_encrypt(key: &KeyBytes, iv: KeyBytes, data: &mut [u8]) {
     use aes::cipher::{block_padding::NoPadding, BlockEncryptMut, KeyIvInit};
     <cbc::Encryptor<aes::Aes128>>::new(key.into(), &aes::Block::from(iv))
@@ -116,6 +125,7 @@ pub(crate) fn aes_encrypt(key: &KeyBytes, iv: KeyBytes, data: &mut [u8]) {
 }
 
 /// Decrypts data in-place using AES-128-CBC with the given key and IV.
+#[inline(always)]
 pub(crate) fn aes_decrypt(key: &KeyBytes, iv: KeyBytes, data: &mut [u8]) {
     use aes::cipher::{block_padding::NoPadding, BlockDecryptMut, KeyIvInit};
     <cbc::Decryptor<aes::Aes128>>::new(key.into(), &aes::Block::from(iv))

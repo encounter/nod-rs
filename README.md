@@ -1,4 +1,4 @@
-# nod-rs [![Build Status]][actions] [![Latest Version]][crates.io] [![Api Rustdoc]][rustdoc] ![Rust Version]
+# nod [![Build Status]][actions] [![Latest Version]][crates.io] [![Api Rustdoc]][rustdoc] ![Rust Version]
 
 [Build Status]: https://github.com/encounter/nod-rs/actions/workflows/build.yaml/badge.svg
 [actions]: https://github.com/encounter/nod-rs/actions
@@ -8,7 +8,7 @@
 [rustdoc]: https://docs.rs/nod
 [Rust Version]: https://img.shields.io/badge/rust-1.73+-blue.svg?maxAge=3600
 
-Library for traversing & reading GameCube and Wii disc images.
+Library for traversing & reading Nintendo Optical Disc (GameCube and Wii) images.
 
 Originally based on the C++ library [nod](https://github.com/AxioDL/nod),
 but does not currently support authoring.
@@ -19,6 +19,7 @@ Currently supported file formats:
 - WBFS (+ NKit 2 lossless)
 - CISO (+ NKit 2 lossless)
 - NFS (Wii U VC)
+- GCZ
 
 ## CLI tool
 

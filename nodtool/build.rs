@@ -45,6 +45,7 @@ fn main() {
     // Parse dat files
     let mut entries = Vec::<(GameEntry, String)>::new();
     for path in ["assets/redump-gc.dat", "assets/redump-wii.dat"] {
+        println!("cargo:rustc-rerun-if-changed={}", path);
         let file = BufReader::new(File::open(path).expect("Failed to open dat file"));
         let dat: DatFile = quick_xml::de::from_reader(file).expect("Failed to parse dat file");
         entries.extend(dat.games.into_iter().map(|game| {

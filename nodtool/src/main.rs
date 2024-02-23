@@ -12,7 +12,7 @@ use std::{
     fs::File,
     io,
     io::{BufWriter, Read, Write},
-    path::{Path, PathBuf},
+    path::{Path, PathBuf, MAIN_SEPARATOR},
     str::FromStr,
     sync::{mpsc::sync_channel, Arc},
     thread,
@@ -27,7 +27,7 @@ use nod::{
     Compression, Disc, DiscHeader, DiscMeta, Fst, Node, OpenOptions, PartitionBase, PartitionKind,
     PartitionMeta, Result, ResultContext, SECTOR_SIZE,
 };
-use size::Size;
+use size::{Base, Size};
 use supports_color::Stream;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
@@ -64,12 +64,12 @@ enum SubCommand {
 }
 
 #[derive(FromArgs, Debug)]
-/// Displays information about a disc image.
+/// Displays information about disc images.
 #[argp(subcommand, name = "info")]
 struct InfoArgs {
     #[argp(positional)]
-    /// path to disc image
-    file: PathBuf,
+    /// Path to disc image(s)
+    file: Vec<PathBuf>,
 }
 
 #[derive(FromArgs, Debug)]
@@ -77,17 +77,21 @@ struct InfoArgs {
 #[argp(subcommand, name = "extract")]
 struct ExtractArgs {
     #[argp(positional)]
-    /// path to disc image
+    /// Path to disc image
     file: PathBuf,
     #[argp(positional)]
-    /// output directory (optional)
+    /// Output directory (optional)
     out: Option<PathBuf>,
     #[argp(switch, short = 'q')]
-    /// quiet output
+    /// Quiet output
     quiet: bool,
     #[argp(switch, short = 'h')]
-    /// validate disc hashes (Wii only)
+    /// Validate data hashes (Wii only)
     validate: bool,
+    #[argp(option, short = 'p')]
+    /// Partition to extract (default: data)
+    /// Options: all, data, update, channel, or a partition index
+    partition: Option<String>,
 }
 
 #[derive(FromArgs, Debug)]
@@ -206,7 +210,7 @@ fn main() {
     let mut result = Ok(());
     if let Some(dir) = &args.chdir {
         result = env::set_current_dir(dir).map_err(|e| {
-            nod::Error::Io(format!("Failed to change working directory to '{}'", dir.display()), e)
+            nod::Error::Io(format!("Failed to change working directory to '{}'", display(dir)), e)
         });
     }
     result = result.and_then(|_| match args.command {
@@ -253,7 +257,15 @@ fn print_header(header: &DiscHeader, meta: &DiscMeta) {
 }
 
 fn info(args: InfoArgs) -> Result<()> {
-    let disc = Disc::new_with_options(args.file, &OpenOptions {
+    for file in &args.file {
+        info_file(file)?;
+    }
+    Ok(())
+}
+
+fn info_file(path: &Path) -> Result<()> {
+    log::info!("Loading {}", display(path));
+    let disc = Disc::new_with_options(path, &OpenOptions {
         rebuild_encryption: false,
         validate_hashes: false,
     })?;
@@ -327,6 +339,7 @@ fn info(args: InfoArgs) -> Result<()> {
             header.wii_magic.get()
         );
     }
+    println!();
     Ok(())
 }
 
@@ -343,7 +356,7 @@ fn verify(args: VerifyArgs) -> Result<()> {
 }
 
 fn convert_and_verify(in_file: &Path, out_file: Option<&Path>, md5: bool) -> Result<()> {
-    println!("Loading {}", in_file.display());
+    println!("Loading {}", display(in_file));
     let mut disc = Disc::new_with_options(in_file, &OpenOptions {
         rebuild_encryption: true,
         validate_hashes: false,
@@ -357,7 +370,7 @@ fn convert_and_verify(in_file: &Path, out_file: Option<&Path>, md5: bool) -> Res
     let mut file = if let Some(out_file) = out_file {
         Some(
             File::create(out_file)
-                .with_context(|| format!("Creating file {}", out_file.display()))?,
+                .with_context(|| format!("Creating file {}", display(out_file)))?,
         )
     } else {
         None
@@ -432,7 +445,7 @@ fn convert_and_verify(in_file: &Path, out_file: Option<&Path>, md5: bool) -> Res
 
     println!();
     if let Some(path) = out_file {
-        println!("Wrote {} to {}", Size::from_bytes(total_read), path.display());
+        println!("Wrote {} to {}", Size::from_bytes(total_read), display(path));
     }
 
     println!();
@@ -450,11 +463,7 @@ fn convert_and_verify(in_file: &Path, out_file: Option<&Path>, md5: bool) -> Res
         }
     }
 
-    let redump_entry = if let (Some(crc32), Some(sha1)) = (crc32, sha1) {
-        redump::find_by_hashes(crc32, sha1)
-    } else {
-        None
-    };
+    let redump_entry = crc32.and_then(redump::find_by_crc32);
     let expected_crc32 = meta.crc32.or(redump_entry.as_ref().map(|e| e.crc32));
     let expected_md5 = meta.md5.or(redump_entry.as_ref().map(|e| e.md5));
     let expected_sha1 = meta.sha1.or(redump_entry.as_ref().map(|e| e.sha1));
@@ -475,7 +484,22 @@ fn convert_and_verify(in_file: &Path, out_file: Option<&Path>, md5: bool) -> Res
     }
 
     if let Some(entry) = &redump_entry {
-        println!("Redump: {} ✅", entry.name);
+        let mut full_match = true;
+        if let Some(md5) = md5 {
+            if entry.md5 != md5 {
+                full_match = false;
+            }
+        }
+        if let Some(sha1) = sha1 {
+            if entry.sha1 != sha1 {
+                full_match = false;
+            }
+        }
+        if full_match {
+            println!("Redump: {} ✅", entry.name);
+        } else {
+            println!("Redump: {} ❓ (partial match)", entry.name);
+        }
     } else {
         println!("Redump: Not found ❌");
     }
@@ -520,12 +544,49 @@ fn extract(args: ExtractArgs) -> Result<()> {
         validate_hashes: args.validate,
     })?;
     let is_wii = disc.header().is_wii();
-    let mut partition = disc.open_partition_kind(PartitionKind::Data)?;
+    if let Some(partition) = args.partition {
+        if partition.eq_ignore_ascii_case("all") {
+            for info in disc.partitions() {
+                let mut out_dir = output_dir.clone();
+                out_dir.push(info.kind.dir_name().as_ref());
+                let mut partition = disc.open_partition(info.index)?;
+                extract_partition(partition.as_mut(), &out_dir, is_wii, args.quiet)?;
+            }
+        } else if partition.eq_ignore_ascii_case("data") {
+            let mut partition = disc.open_partition_kind(PartitionKind::Data)?;
+            extract_partition(partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+        } else if partition.eq_ignore_ascii_case("update") {
+            let mut partition = disc.open_partition_kind(PartitionKind::Update)?;
+            extract_partition(partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+        } else if partition.eq_ignore_ascii_case("channel") {
+            let mut partition = disc.open_partition_kind(PartitionKind::Channel)?;
+            extract_partition(partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+        } else {
+            let idx = partition.parse::<usize>().map_err(|_| "Invalid partition index")?;
+            let mut partition = disc.open_partition(idx)?;
+            extract_partition(partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+        }
+    } else {
+        let mut partition = disc.open_partition_kind(PartitionKind::Data)?;
+        extract_partition(partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+    }
+    Ok(())
+}
+
+fn extract_partition(
+    partition: &mut dyn PartitionBase,
+    out_dir: &Path,
+    is_wii: bool,
+    quiet: bool,
+) -> Result<()> {
     let meta = partition.meta()?;
-    extract_sys_files(meta.as_ref(), &output_dir.join("sys"), args.quiet)?;
+    extract_sys_files(meta.as_ref(), out_dir, quiet)?;
 
     // Extract FST
-    let files_dir = output_dir.join("files");
+    let files_dir = out_dir.join("files");
+    fs::create_dir_all(&files_dir)
+        .with_context(|| format!("Creating directory {}", display(&files_dir)))?;
+
     let fst = Fst::new(&meta.raw_fst)?;
     let mut path_segments = Vec::<(Cow<str>, usize)>::new();
     for (idx, node, name) in fst.iter() {
@@ -548,28 +609,47 @@ fn extract(args: ExtractArgs) -> Result<()> {
             fs::create_dir_all(files_dir.join(&path))
                 .with_context(|| format!("Creating directory {}", path))?;
         } else {
-            extract_node(node, partition.as_mut(), &files_dir, &path, is_wii, args.quiet)?;
+            extract_node(node, partition, &files_dir, &path, is_wii, quiet)?;
         }
     }
     Ok(())
 }
 
 fn extract_sys_files(data: &PartitionMeta, out_dir: &Path, quiet: bool) -> Result<()> {
-    fs::create_dir_all(out_dir)
-        .with_context(|| format!("Creating output directory {}", out_dir.display()))?;
-    extract_file(data.raw_boot.as_ref(), &out_dir.join("boot.bin"), quiet)?;
-    extract_file(data.raw_bi2.as_ref(), &out_dir.join("bi2.bin"), quiet)?;
-    extract_file(data.raw_apploader.as_ref(), &out_dir.join("apploader.img"), quiet)?;
-    extract_file(data.raw_fst.as_ref(), &out_dir.join("fst.bin"), quiet)?;
-    extract_file(data.raw_dol.as_ref(), &out_dir.join("main.dol"), quiet)?;
+    let sys_dir = out_dir.join("sys");
+    fs::create_dir_all(&sys_dir)
+        .with_context(|| format!("Creating directory {}", display(&sys_dir)))?;
+    extract_file(data.raw_boot.as_ref(), &sys_dir.join("boot.bin"), quiet)?;
+    extract_file(data.raw_bi2.as_ref(), &sys_dir.join("bi2.bin"), quiet)?;
+    extract_file(data.raw_apploader.as_ref(), &sys_dir.join("apploader.img"), quiet)?;
+    extract_file(data.raw_fst.as_ref(), &sys_dir.join("fst.bin"), quiet)?;
+    extract_file(data.raw_dol.as_ref(), &sys_dir.join("main.dol"), quiet)?;
+
+    // Wii files
+    if let Some(ticket) = data.raw_ticket.as_deref() {
+        extract_file(ticket, &out_dir.join("ticket.bin"), quiet)?;
+    }
+    if let Some(tmd) = data.raw_tmd.as_deref() {
+        extract_file(tmd, &out_dir.join("tmd.bin"), quiet)?;
+    }
+    if let Some(cert_chain) = data.raw_cert_chain.as_deref() {
+        extract_file(cert_chain, &out_dir.join("cert.bin"), quiet)?;
+    }
+    if let Some(h3_table) = data.raw_h3_table.as_deref() {
+        extract_file(h3_table, &out_dir.join("h3.bin"), quiet)?;
+    }
     Ok(())
 }
 
 fn extract_file(bytes: &[u8], out_path: &Path, quiet: bool) -> Result<()> {
     if !quiet {
-        println!("Extracting {} (size: {})", out_path.display(), Size::from_bytes(bytes.len()));
+        println!(
+            "Extracting {} (size: {})",
+            display(out_path),
+            Size::from_bytes(bytes.len()).format().with_base(Base::Base10)
+        );
     }
-    fs::write(out_path, bytes).with_context(|| format!("Writing file {}", out_path.display()))?;
+    fs::write(out_path, bytes).with_context(|| format!("Writing file {}", display(out_path)))?;
     Ok(())
 }
 
@@ -585,12 +665,12 @@ fn extract_node(
     if !quiet {
         println!(
             "Extracting {} (size: {})",
-            file_path.display(),
-            Size::from_bytes(node.length(is_wii))
+            display(&file_path),
+            Size::from_bytes(node.length(is_wii)).format().with_base(Base::Base10)
         );
     }
     let file = File::create(&file_path)
-        .with_context(|| format!("Creating file {}", file_path.display()))?;
+        .with_context(|| format!("Creating file {}", display(&file_path)))?;
     let mut w = BufWriter::with_capacity(partition.ideal_buffer_size(), file);
     let mut r = partition.open_file(node).with_context(|| {
         format!(
@@ -600,7 +680,33 @@ fn extract_node(
             node.length(is_wii)
         )
     })?;
-    io::copy(&mut r, &mut w).with_context(|| format!("Extracting file {}", file_path.display()))?;
-    w.flush().with_context(|| format!("Flushing file {}", file_path.display()))?;
+    io::copy(&mut r, &mut w).with_context(|| format!("Extracting file {}", display(&file_path)))?;
+    w.flush().with_context(|| format!("Flushing file {}", display(&file_path)))?;
     Ok(())
+}
+
+fn display(path: &Path) -> PathDisplay { PathDisplay { path } }
+
+struct PathDisplay<'a> {
+    path: &'a Path,
+}
+
+impl<'a> fmt::Display for PathDisplay<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use fmt::Write;
+        let mut first = true;
+        for segment in self.path.iter() {
+            let segment_str = segment.to_string_lossy();
+            if segment_str == "." {
+                continue;
+            }
+            if first {
+                first = false;
+            } else {
+                f.write_char(MAIN_SEPARATOR)?;
+            }
+            f.write_str(&segment_str)?;
+        }
+        Ok(())
+    }
 }

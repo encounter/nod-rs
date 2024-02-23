@@ -196,7 +196,7 @@ pub fn rebuild_hashes(reader: &mut DiscReader) -> Result<()> {
 }
 
 #[inline]
-fn hash_bytes(buf: &[u8]) -> HashBytes {
+pub fn hash_bytes(buf: &[u8]) -> HashBytes {
     let mut hasher = Sha1::new();
     hasher.update(buf);
     hasher.finalize().into()

@@ -109,30 +109,33 @@ impl DiscIOWBFS {
 }
 
 impl BlockIO for DiscIOWBFS {
-    fn read_block(
+    fn read_block_internal(
         &mut self,
         out: &mut [u8],
         block: u32,
         _partition: Option<&PartitionInfo>,
-    ) -> io::Result<Option<Block>> {
+    ) -> io::Result<Block> {
         let block_size = self.header.block_size();
         if block >= self.header.max_blocks() {
-            return Ok(None);
+            return Ok(Block::Zero);
         }
 
         // Check if block is junk data
-        if self.nkit_header.as_ref().is_some_and(|h| h.is_junk_block(block).unwrap_or(false)) {
-            return Ok(Some(Block::Junk));
+        if self.nkit_header.as_ref().and_then(|h| h.is_junk_block(block)).unwrap_or(false) {
+            return Ok(Block::Junk);
         }
 
         // Read block
         let block_start = block_size as u64 * self.block_table[block as usize].get() as u64;
+        if block_start == 0 {
+            return Ok(Block::Zero);
+        }
         self.inner.seek(SeekFrom::Start(block_start))?;
         self.inner.read_exact(out)?;
-        Ok(Some(Block::Raw))
+        Ok(Block::Raw)
     }
 
-    fn block_size(&self) -> u32 { self.header.block_size() }
+    fn block_size_internal(&self) -> u32 { self.header.block_size() }
 
     fn meta(&self) -> DiscMeta {
         let mut result = DiscMeta {

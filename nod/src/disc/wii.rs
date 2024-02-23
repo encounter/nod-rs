@@ -233,7 +233,7 @@ impl WiiPartitionHeader {
 pub struct PartitionWii {
     io: Box<dyn BlockIO>,
     partition: PartitionInfo,
-    block: Option<Block>,
+    block: Block,
     block_buf: Box<[u8]>,
     block_idx: u32,
     sector_buf: Box<[u8; SECTOR_SIZE]>,
@@ -250,7 +250,7 @@ impl Clone for PartitionWii {
         Self {
             io: self.io.clone(),
             partition: self.partition.clone(),
-            block: None,
+            block: Block::default(),
             block_buf: <u8>::new_box_slice_zeroed(self.block_buf.len()),
             block_idx: u32::MAX,
             sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed(),
@@ -296,7 +296,7 @@ impl PartitionWii {
         Ok(Box::new(Self {
             io: reader.into_inner(),
             partition: partition.clone(),
-            block: None,
+            block: Block::default(),
             block_buf: <u8>::new_box_slice_zeroed(block_size as usize),
             block_idx: u32::MAX,
             sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed(),
@@ -328,10 +328,7 @@ impl Read for PartitionWii {
 
         // Decrypt sector if necessary
         if sector != self.sector {
-            let Some(block) = &self.block else {
-                return Ok(0);
-            };
-            block.decrypt(
+            self.block.decrypt(
                 self.sector_buf.as_mut(),
                 self.block_buf.as_ref(),
                 block_idx,

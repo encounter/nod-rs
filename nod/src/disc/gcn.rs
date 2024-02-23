@@ -21,7 +21,7 @@ use crate::{
 
 pub struct PartitionGC {
     io: Box<dyn BlockIO>,
-    block: Option<Block>,
+    block: Block,
     block_buf: Box<[u8]>,
     block_idx: u32,
     sector_buf: Box<[u8; SECTOR_SIZE]>,
@@ -34,7 +34,7 @@ impl Clone for PartitionGC {
     fn clone(&self) -> Self {
         Self {
             io: self.io.clone(),
-            block: None,
+            block: Block::default(),
             block_buf: <u8>::new_box_slice_zeroed(self.block_buf.len()),
             block_idx: u32::MAX,
             sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed(),
@@ -50,7 +50,7 @@ impl PartitionGC {
         let block_size = inner.block_size();
         Ok(Box::new(Self {
             io: inner,
-            block: None,
+            block: Block::default(),
             block_buf: <u8>::new_box_slice_zeroed(block_size as usize),
             block_idx: u32::MAX,
             sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed(),
@@ -76,10 +76,7 @@ impl Read for PartitionGC {
 
         // Copy sector if necessary
         if sector != self.sector {
-            let Some(block) = &self.block else {
-                return Ok(0);
-            };
-            block.copy_raw(
+            self.block.copy_raw(
                 self.sector_buf.as_mut(),
                 self.block_buf.as_ref(),
                 block_idx,

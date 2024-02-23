@@ -12,7 +12,7 @@ pub struct GameResult {
     pub size: u64,
 }
 
-pub fn find_by_hashes(crc32: u32, sha1: [u8; 20]) -> Option<GameResult> {
+pub fn find_by_crc32(crc32: u32) -> Option<GameResult> {
     let header: &Header = Header::ref_from_prefix(&DATA.0).unwrap();
     assert_eq!(header.entry_size as usize, size_of::<GameEntry>());
 
@@ -25,13 +25,8 @@ pub fn find_by_hashes(crc32: u32, sha1: [u8; 20]) -> Option<GameResult> {
     // Binary search by CRC32
     let index = entries.binary_search_by_key(&crc32, |entry| entry.crc32).ok()?;
 
-    // Verify SHA-1
-    let entry = &entries[index];
-    if entry.sha1 != sha1 {
-        return None;
-    }
-
     // Parse the entry
+    let entry = &entries[index];
     let offset = entry.string_table_offset as usize;
     let name_size = u32::from_ne_bytes(*array_ref![string_table, offset, 4]) as usize;
     let name = str::from_utf8(&string_table[offset + 4..offset + 4 + name_size]).unwrap();
