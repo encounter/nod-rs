@@ -9,7 +9,7 @@ use zerocopy::{FromBytes, FromZeroes};
 
 use crate::{
     disc::{
-        AppLoaderHeader, DiscHeader, DolHeader, PartitionBase, PartitionHeader, PartitionMeta,
+        ApploaderHeader, DiscHeader, DolHeader, PartitionBase, PartitionHeader, PartitionMeta,
         BI2_SIZE, BOOT_SIZE, SECTOR_SIZE,
     },
     fst::{Node, NodeKind},
@@ -79,7 +79,6 @@ impl Read for PartitionGC {
             self.block.copy_raw(
                 self.sector_buf.as_mut(),
                 self.block_buf.as_ref(),
-                block_idx,
                 sector,
                 &self.disc_header,
             )?;
@@ -137,33 +136,34 @@ pub(crate) fn read_part_meta(
 
     // apploader.bin
     let mut raw_apploader: Vec<u8> =
-        read_vec(reader, size_of::<AppLoaderHeader>()).context("Reading apploader header")?;
-    let apploader_header = AppLoaderHeader::ref_from(raw_apploader.as_slice()).unwrap();
+        read_vec(reader, size_of::<ApploaderHeader>()).context("Reading apploader header")?;
+    let apploader_header = ApploaderHeader::ref_from(raw_apploader.as_slice()).unwrap();
     raw_apploader.resize(
-        size_of::<AppLoaderHeader>()
+        size_of::<ApploaderHeader>()
             + apploader_header.size.get() as usize
             + apploader_header.trailer_size.get() as usize,
         0,
     );
     reader
-        .read_exact(&mut raw_apploader[size_of::<AppLoaderHeader>()..])
+        .read_exact(&mut raw_apploader[size_of::<ApploaderHeader>()..])
         .context("Reading apploader")?;
 
     // fst.bin
     reader
-        .seek(SeekFrom::Start(partition_header.fst_off(is_wii)))
+        .seek(SeekFrom::Start(partition_header.fst_offset(is_wii)))
         .context("Seeking to FST offset")?;
-    let raw_fst: Box<[u8]> = read_box_slice(reader, partition_header.fst_sz(is_wii) as usize)
+    let raw_fst: Box<[u8]> = read_box_slice(reader, partition_header.fst_size(is_wii) as usize)
         .with_context(|| {
             format!(
                 "Reading partition FST (offset {}, size {})",
-                partition_header.fst_off, partition_header.fst_sz
+                partition_header.fst_offset(is_wii),
+                partition_header.fst_size(is_wii)
             )
         })?;
 
     // main.dol
     reader
-        .seek(SeekFrom::Start(partition_header.dol_off(is_wii)))
+        .seek(SeekFrom::Start(partition_header.dol_offset(is_wii)))
         .context("Seeking to DOL offset")?;
     let mut raw_dol: Vec<u8> =
         read_vec(reader, size_of::<DolHeader>()).context("Reading DOL header")?;

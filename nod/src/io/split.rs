@@ -100,11 +100,6 @@ impl SplitFileReader {
         Ok(())
     }
 
-    pub fn reset(&mut self) {
-        self.open_file = None;
-        self.pos = 0;
-    }
-
     pub fn len(&self) -> u64 { self.files.last().map_or(0, |f| f.begin + f.size) }
 }
 

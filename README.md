@@ -70,24 +70,43 @@ Opening a disc image and reading a file:
 ```rust
 use std::io::Read;
 
-use nod::{Disc, PartitionKind};
+// Open a disc image and the first data partition.
+let disc = nod::Disc::new("path/to/file.iso")
+    .expect("Failed to open disc");
+let mut partition = disc.open_partition_kind(nod::PartitionKind::Data)
+    .expect("Failed to open data partition");
 
-fn main() -> nod::Result<()> {
-    let disc = Disc::new("path/to/file.iso")?;
-    let mut partition = disc.open_partition_kind(PartitionKind::Data)?;
-    let meta = partition.meta()?;
-    let fst = meta.fst()?;
-    if let Some((_, node)) = fst.find("/MP3/Worlds.txt") {
-        let mut s = String::new();
-        partition
-            .open_file(node)
-            .expect("Failed to open file stream")
-            .read_to_string(&mut s)
-            .expect("Failed to read file");
-        println!("{}", s);
-    }
-    Ok(())
+// Read partition metadata and the file system table.
+let meta = partition.meta()
+    .expect("Failed to read partition metadata");
+let fst = meta.fst()
+    .expect("File system table is invalid");
+
+// Find a file by path and read it into a string.
+if let Some((_, node)) = fst.find("/MP3/Worlds.txt") {
+    let mut s = String::new();
+    partition
+        .open_file(node)
+        .expect("Failed to open file stream")
+        .read_to_string(&mut s)
+        .expect("Failed to read file");
+    println!("{}", s);
 }
+```
+
+Converting a disc image to raw ISO:
+
+```rust
+// Enable `rebuild_encryption` to ensure the output is a valid ISO.
+let options = nod::OpenOptions { rebuild_encryption: true, ..Default::default() };
+let mut disc = nod::Disc::new_with_options("path/to/file.rvz", &options)
+    .expect("Failed to open disc");
+
+// Read directly from the open disc and write to the output file.
+let mut out = std::fs::File::create("output.iso")
+    .expect("Failed to create output file");
+std::io::copy(&mut disc, &mut out)
+    .expect("Failed to write data");
 ```
 
 ## License

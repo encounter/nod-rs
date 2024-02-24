@@ -25,9 +25,12 @@ pub(crate) mod hashes;
 pub(crate) mod reader;
 pub(crate) mod wii;
 
+/// Size in bytes of a disc sector.
 pub const SECTOR_SIZE: usize = 0x8000;
 
-/// Shared GameCube & Wii disc header
+/// Shared GameCube & Wii disc header.
+///
+/// This header is always at the start of the disc image and within each Wii partition.
 #[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
 pub struct DiscHeader {
@@ -78,30 +81,34 @@ impl DiscHeader {
     pub fn is_wii(&self) -> bool { self.wii_magic.get() == 0x5D1C9EA3 }
 }
 
-/// Partition header
+/// A header describing the contents of a disc partition.
+///
+/// **GameCube**: Always follows the disc header.
+///
+/// **Wii**: Follows the disc header within each partition.
 #[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
 pub struct PartitionHeader {
     /// Debug monitor offset
-    pub debug_mon_off: U32,
+    pub debug_mon_offset: U32,
     /// Debug monitor load address
-    pub debug_load_addr: U32,
+    pub debug_load_address: U32,
     /// Padding
     _pad1: [u8; 0x18],
     /// Offset to main DOL (Wii: >> 2)
-    pub dol_off: U32,
+    pub dol_offset: U32,
     /// Offset to file system table (Wii: >> 2)
-    pub fst_off: U32,
+    pub fst_offset: U32,
     /// File system size (Wii: >> 2)
-    pub fst_sz: U32,
+    pub fst_size: U32,
     /// File system max size (Wii: >> 2)
-    pub fst_max_sz: U32,
+    pub fst_max_size: U32,
     /// File system table load address
     pub fst_memory_address: U32,
     /// User position
     pub user_position: U32,
     /// User size
-    pub user_sz: U32,
+    pub user_size: U32,
     /// Padding
     _pad2: [u8; 4],
 }
@@ -109,43 +116,47 @@ pub struct PartitionHeader {
 static_assert!(size_of::<PartitionHeader>() == 0x40);
 
 impl PartitionHeader {
-    pub fn dol_off(&self, is_wii: bool) -> u64 {
+    /// Offset within the partition to the main DOL.
+    pub fn dol_offset(&self, is_wii: bool) -> u64 {
         if is_wii {
-            self.dol_off.get() as u64 * 4
+            self.dol_offset.get() as u64 * 4
         } else {
-            self.dol_off.get() as u64
+            self.dol_offset.get() as u64
         }
     }
 
-    pub fn fst_off(&self, is_wii: bool) -> u64 {
+    /// Offset within the partition to the file system table (FST).
+    pub fn fst_offset(&self, is_wii: bool) -> u64 {
         if is_wii {
-            self.fst_off.get() as u64 * 4
+            self.fst_offset.get() as u64 * 4
         } else {
-            self.fst_off.get() as u64
+            self.fst_offset.get() as u64
         }
     }
 
-    pub fn fst_sz(&self, is_wii: bool) -> u64 {
+    /// Size of the file system table (FST).
+    pub fn fst_size(&self, is_wii: bool) -> u64 {
         if is_wii {
-            self.fst_sz.get() as u64 * 4
+            self.fst_size.get() as u64 * 4
         } else {
-            self.fst_sz.get() as u64
+            self.fst_size.get() as u64
         }
     }
 
-    pub fn fst_max_sz(&self, is_wii: bool) -> u64 {
+    /// Maximum size of the file system table (FST) across multi-disc games.
+    pub fn fst_max_size(&self, is_wii: bool) -> u64 {
         if is_wii {
-            self.fst_max_sz.get() as u64 * 4
+            self.fst_max_size.get() as u64 * 4
         } else {
-            self.fst_max_sz.get() as u64
+            self.fst_max_size.get() as u64
         }
     }
 }
 
-/// Apploader header
+/// Apploader header.
 #[derive(Debug, PartialEq, Clone, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
-pub struct AppLoaderHeader {
+pub struct ApploaderHeader {
     /// Apploader build date
     pub date: [u8; 16],
     /// Entry point
@@ -158,19 +169,19 @@ pub struct AppLoaderHeader {
     _pad: [u8; 4],
 }
 
-impl AppLoaderHeader {
-    /// Apploader build date as a string
+impl ApploaderHeader {
+    /// Apploader build date as a string.
     pub fn date_str(&self) -> Option<&str> {
         CStr::from_bytes_until_nul(&self.date).ok().and_then(|c| c.to_str().ok())
     }
 }
 
-/// Maximum number of text sections in a DOL
+/// Maximum number of text sections in a DOL.
 pub const DOL_MAX_TEXT_SECTIONS: usize = 7;
-/// Maximum number of data sections in a DOL
+/// Maximum number of data sections in a DOL.
 pub const DOL_MAX_DATA_SECTIONS: usize = 11;
 
-/// DOL header
+/// Dolphin executable (DOL) header.
 #[derive(Debug, Clone, FromBytes, FromZeroes)]
 pub struct DolHeader {
     /// Text section offsets
@@ -197,12 +208,16 @@ pub struct DolHeader {
 
 static_assert!(size_of::<DolHeader>() == 0x100);
 
-/// Partition type
+/// The kind of disc partition.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum PartitionKind {
+    /// Data partition.
     Data,
+    /// Update partition.
     Update,
+    /// Channel partition.
     Channel,
+    /// Other partition kind.
     Other(u32),
 }
 
@@ -246,7 +261,7 @@ impl From<u32> for PartitionKind {
     }
 }
 
-/// An open read stream for a disc partition.
+/// An open disc partition.
 pub trait PartitionBase: DynClone + ReadStream + Send + Sync {
     /// Reads the partition header and file system table.
     fn meta(&mut self) -> Result<Box<PartitionMeta>>;
@@ -283,7 +298,7 @@ pub trait PartitionBase: DynClone + ReadStream + Send + Sync {
 
     /// The ideal size for buffered reads from this partition.
     /// GameCube discs have a data block size of 0x8000,
-    /// whereas Wii discs have a data block size of 0x7c00.
+    /// whereas Wii discs have a data block size of 0x7C00.
     fn ideal_buffer_size(&self) -> usize;
 }
 
@@ -294,7 +309,7 @@ pub const BOOT_SIZE: usize = size_of::<DiscHeader>() + size_of::<PartitionHeader
 /// Size of the debug and region information (bi2.bin)
 pub const BI2_SIZE: usize = 0x2000;
 
-/// Disc partition metadata
+/// Extra disc partition data. (DOL, FST, etc.)
 #[derive(Clone, Debug)]
 pub struct PartitionMeta {
     /// Disc and partition header (boot.bin)
@@ -318,31 +333,50 @@ pub struct PartitionMeta {
 }
 
 impl PartitionMeta {
+    /// A view into the disc header.
     pub fn header(&self) -> &DiscHeader {
         DiscHeader::ref_from(&self.raw_boot[..size_of::<DiscHeader>()]).unwrap()
     }
 
+    /// A view into the partition header.
     pub fn partition_header(&self) -> &PartitionHeader {
         PartitionHeader::ref_from(&self.raw_boot[size_of::<DiscHeader>()..]).unwrap()
     }
 
-    pub fn apploader_header(&self) -> &AppLoaderHeader {
-        AppLoaderHeader::ref_from_prefix(&self.raw_apploader).unwrap()
+    /// A view into the apploader header.
+    pub fn apploader_header(&self) -> &ApploaderHeader {
+        ApploaderHeader::ref_from_prefix(&self.raw_apploader).unwrap()
     }
 
+    /// A view into the file system table (FST).
     pub fn fst(&self) -> Result<Fst, &'static str> { Fst::new(&self.raw_fst) }
 
+    /// A view into the DOL header.
     pub fn dol_header(&self) -> &DolHeader { DolHeader::ref_from_prefix(&self.raw_dol).unwrap() }
 
+    /// A view into the ticket. (Wii only)
     pub fn ticket(&self) -> Option<&Ticket> {
         self.raw_ticket.as_ref().and_then(|v| Ticket::ref_from(v))
     }
 
+    /// A view into the TMD. (Wii only)
     pub fn tmd_header(&self) -> Option<&TmdHeader> {
         self.raw_tmd.as_ref().and_then(|v| TmdHeader::ref_from_prefix(v))
     }
 }
 
+/// The size of a single-layer MiniDVD. (1.4 GB)
+///
+/// GameCube games and some third-party Wii discs (Datel) use this format.
 pub const MINI_DVD_SIZE: u64 = 1_459_978_240;
+
+/// The size of a single-layer DVD. (4.7 GB)
+///
+/// The vast majority of Wii games use this format.
 pub const SL_DVD_SIZE: u64 = 4_699_979_776;
+
+/// The size of a dual-layer DVD. (8.5 GB)
+///
+/// A few larger Wii games use this format.
+/// (Super Smash Bros. Brawl, Metroid Prime Trilogy, etc.)
 pub const DL_DVD_SIZE: u64 = 8_511_160_320;

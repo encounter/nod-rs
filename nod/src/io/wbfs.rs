@@ -102,8 +102,6 @@ impl DiscIOWBFS {
         inner.seek(SeekFrom::Start(0x10000)).context("Seeking to NKit header")?;
         let nkit_header = NKitHeader::try_read_from(&mut inner, header.block_size(), true);
 
-        // Reset reader
-        inner.reset();
         Ok(Box::new(Self { inner, header, block_map, nkit_header }))
     }
 }

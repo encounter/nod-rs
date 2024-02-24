@@ -78,9 +78,6 @@ impl DiscIOGCZ {
 
         // header + block_count * (u64 + u32)
         let data_offset = size_of::<GCZHeader>() as u64 + block_count as u64 * 12;
-
-        // Reset reader
-        inner.reset();
         let block_buf = <u8>::new_box_slice_zeroed(header.block_size.get() as usize);
         Ok(Box::new(Self { inner, header, block_map, block_hashes, block_buf, data_offset }))
     }

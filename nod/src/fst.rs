@@ -32,7 +32,7 @@ pub struct Node {
 static_assert!(size_of::<Node>() == 12);
 
 impl Node {
-    /// File system node type.
+    /// File system node kind.
     pub fn kind(&self) -> NodeKind {
         match self.kind {
             0 => NodeKind::File,
@@ -71,9 +71,11 @@ impl Node {
     pub fn length(&self) -> u64 { self.length.get() as u64 }
 }
 
-/// A view into the file system tree (FST).
+/// A view into the file system table (FST).
 pub struct Fst<'a> {
+    /// The nodes in the FST.
     pub nodes: &'a [Node],
+    /// The string table containing all file and directory names.
     pub string_table: &'a [u8],
 }
 

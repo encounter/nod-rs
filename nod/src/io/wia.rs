@@ -91,16 +91,16 @@ impl WIAFileHeader {
     pub fn is_rvz(&self) -> bool { self.magic == RVZ_MAGIC }
 }
 
-/// Disc type
+/// Disc kind
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DiscType {
+pub enum DiscKind {
     /// GameCube disc
     GameCube,
     /// Wii disc
     Wii,
 }
 
-impl TryFrom<u32> for DiscType {
+impl TryFrom<u32> for DiscKind {
     type Error = Error;
 
     fn try_from(value: u32) -> Result<Self> {
@@ -225,11 +225,11 @@ static_assert!(size_of::<WIADisc>() == 0xDC);
 
 impl WIADisc {
     pub fn validate(&self) -> Result<()> {
-        DiscType::try_from(self.disc_type.get())?;
+        DiscKind::try_from(self.disc_type.get())?;
         WIACompression::try_from(self.compression.get())?;
         if self.partition_type_size.get() != size_of::<WIAPartition>() as u32 {
             return Err(Error::DiscFormat(format!(
-                "WIA partition type size is {}, expected {}",
+                "WIA/RVZ partition type size is {}, expected {}",
                 self.partition_type_size.get(),
                 size_of::<WIAPartition>()
             )));
@@ -518,12 +518,12 @@ pub struct DiscIOWIA {
 impl Clone for DiscIOWIA {
     fn clone(&self) -> Self {
         Self {
+            inner: self.inner.clone(),
             header: self.header.clone(),
             disc: self.disc.clone(),
             partitions: self.partitions.clone(),
             raw_data: self.raw_data.clone(),
             groups: self.groups.clone(),
-            inner: self.inner.clone(),
             nkit_header: self.nkit_header.clone(),
             decompressor: self.decompressor.clone(),
             group: u32::MAX,
@@ -541,7 +541,7 @@ fn verify_hash(buf: &[u8], expected: &HashBytes) -> Result<()> {
         let mut expected_bytes = [0u8; 40];
         let expected = base16ct::lower::encode_str(expected, &mut expected_bytes).unwrap(); // Safe: fixed buffer size
         return Err(Error::DiscFormat(format!(
-            "WIA hash mismatch: {}, expected {}",
+            "WIA/RVZ hash mismatch: {}, expected {}",
             got, expected
         )));
     }
@@ -685,18 +685,10 @@ impl BlockIO for DiscIOWIA {
         sector: u32,
         partition: Option<&PartitionInfo>,
     ) -> io::Result<Block> {
-        let mut chunk_size = self.disc.chunk_size.get();
+        let chunk_size = self.disc.chunk_size.get();
         let sectors_per_chunk = chunk_size / SECTOR_SIZE as u32;
-        let disc_offset = sector as u64 * SECTOR_SIZE as u64;
-        let mut partition_offset = disc_offset;
-        if let Some(partition) = partition {
-            // Within a partition, hashes are excluded from the data size
-            chunk_size = (chunk_size * SECTOR_DATA_SIZE as u32) / SECTOR_SIZE as u32;
-            partition_offset =
-                (sector - partition.data_start_sector) as u64 * SECTOR_DATA_SIZE as u64;
-        }
 
-        let (group_index, group_sector) = if let Some(partition) = partition {
+        let (group_index, group_sector, partition_offset) = if let Some(partition) = partition {
             // Find the partition
             let Some(wia_part) = self.partitions.get(partition.index) else {
                 return Err(io::Error::new(
@@ -747,7 +739,12 @@ impl BlockIO for DiscIOWIA {
                 ));
             }
 
-            (pd.group_index.get() + part_group_index, part_group_sector)
+            // Calculate the group offset within the partition
+            let part_group_offset =
+                (((part_group_index * sectors_per_chunk) + pd.first_sector.get())
+                    - wia_part.partition_data[0].first_sector.get()) as u64
+                    * SECTOR_DATA_SIZE as u64;
+            (pd.group_index.get() + part_group_index, part_group_sector, part_group_offset)
         } else {
             let Some(rd) = self.raw_data.iter().find(|d| d.contains(sector)) else {
                 return Err(io::Error::new(
@@ -771,7 +768,9 @@ impl BlockIO for DiscIOWIA {
                 ));
             }
 
-            (rd.group_index.get() + group_index, group_sector)
+            // Calculate the group offset
+            let group_offset = rd.raw_data_offset.get() + (group_index * chunk_size) as u64;
+            (rd.group_index.get() + group_index, group_sector, group_offset)
         };
 
         // Fetch the group
@@ -790,7 +789,13 @@ impl BlockIO for DiscIOWIA {
 
         // Read group data if necessary
         if group_index != self.group {
-            self.group_data = Vec::with_capacity(chunk_size as usize);
+            let group_data_size = if partition.is_some() {
+                // Within a partition, hashes are excluded from the data size
+                (sectors_per_chunk * SECTOR_DATA_SIZE as u32) as usize
+            } else {
+                chunk_size as usize
+            };
+            self.group_data = Vec::with_capacity(group_data_size);
             let group_data_start = group.data_offset.get() as u64 * 4;
             self.inner.seek(SeekFrom::Start(group_data_start))?;
 
@@ -864,10 +869,10 @@ impl BlockIO for DiscIOWIA {
         // Read sector from cached group data
         if partition.is_some() {
             let sector_data_start = group_sector as usize * SECTOR_DATA_SIZE;
-            let sector_data =
-                &self.group_data[sector_data_start..sector_data_start + SECTOR_DATA_SIZE];
             out[..HASHES_SIZE].fill(0);
-            out[HASHES_SIZE..SECTOR_SIZE].copy_from_slice(sector_data);
+            out[HASHES_SIZE..SECTOR_SIZE].copy_from_slice(
+                &self.group_data[sector_data_start..sector_data_start + SECTOR_DATA_SIZE],
+            );
             Ok(Block::PartDecrypted { has_hashes: false })
         } else {
             let sector_data_start = group_sector as usize * SECTOR_SIZE;

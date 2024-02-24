@@ -22,12 +22,13 @@ pub(crate) type KeyBytes = [u8; 16];
 /// Magic bytes
 pub(crate) type MagicBytes = [u8; 4];
 
+/// The disc file format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Format {
-    /// Raw ISO
+    /// ISO / GCM (GameCube master disc)
     #[default]
     Iso,
-    /// CISO
+    /// CISO (Compact ISO)
     Ciso,
     /// GCZ
     Gcz,
@@ -55,6 +56,7 @@ impl fmt::Display for Format {
     }
 }
 
+/// The disc file format's compression algorithm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Compression {
     /// No compression

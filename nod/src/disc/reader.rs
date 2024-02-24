@@ -83,7 +83,7 @@ impl DiscReader {
         if reader.disc_header.is_wii() {
             reader.partitions = read_partition_info(&mut reader)?;
             // Rebuild hashes if the format requires it
-            if options.rebuild_encryption && meta.needs_hash_recovery {
+            if (options.rebuild_encryption || options.validate_hashes) && meta.needs_hash_recovery {
                 rebuild_hashes(&mut reader)?;
             }
         }
@@ -130,22 +130,22 @@ impl DiscReader {
     }
 
     /// Opens a new, decrypted partition read stream for the first partition matching
-    /// the specified type.
+    /// the specified kind.
     pub fn open_partition_kind(
         &self,
-        part_type: PartitionKind,
+        kind: PartitionKind,
         options: &OpenOptions,
     ) -> Result<Box<dyn PartitionBase>> {
         if self.disc_header.is_gamecube() {
-            if part_type == PartitionKind::Data {
+            if kind == PartitionKind::Data {
                 Ok(PartitionGC::new(self.io.clone(), self.disc_header.clone())?)
             } else {
                 Err(Error::DiscFormat("GameCube discs only have a data partition".to_string()))
             }
-        } else if let Some(part) = self.partitions.iter().find(|v| v.kind == part_type) {
+        } else if let Some(part) = self.partitions.iter().find(|v| v.kind == kind) {
             Ok(PartitionWii::new(self.io.clone(), self.disc_header.clone(), part, options)?)
         } else {
-            Err(Error::DiscFormat(format!("Partition type {part_type} not found")))
+            Err(Error::DiscFormat(format!("Partition type {kind} not found")))
         }
     }
 }
@@ -176,14 +176,12 @@ impl Read for DiscReader {
                     EncryptionMode::Decrypted => self.block.decrypt(
                         self.sector_buf.as_mut(),
                         self.block_buf.as_ref(),
-                        block_idx,
                         abs_sector,
                         partition,
                     )?,
                     EncryptionMode::Encrypted => self.block.encrypt(
                         self.sector_buf.as_mut(),
                         self.block_buf.as_ref(),
-                        block_idx,
                         abs_sector,
                         partition,
                     )?,
@@ -192,7 +190,6 @@ impl Read for DiscReader {
                 self.block.copy_raw(
                     self.sector_buf.as_mut(),
                     self.block_buf.as_ref(),
-                    block_idx,
                     abs_sector,
                     &self.disc_header,
                 )?;
@@ -225,7 +222,7 @@ impl Seek for DiscReader {
     }
 }
 
-fn read_partition_info(reader: &mut DiscReader) -> crate::Result<Vec<PartitionInfo>> {
+fn read_partition_info(reader: &mut DiscReader) -> Result<Vec<PartitionInfo>> {
     reader.seek(SeekFrom::Start(WII_PART_GROUP_OFF)).context("Seeking to partition groups")?;
     let part_groups: [WiiPartGroup; 4] = read_from(reader).context("Reading partition groups")?;
     let mut part_info = Vec::new();
@@ -306,6 +303,7 @@ fn guess_disc_size(part_info: &[PartitionInfo]) -> u64 {
         })
         .max()
         .unwrap_or(0x50000);
+    // TODO add FST offsets (decrypted partitions)
     if max_offset <= MINI_DVD_SIZE && !part_info.iter().any(|v| v.kind == PartitionKind::Data) {
         // Datel disc
         MINI_DVD_SIZE

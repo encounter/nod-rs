@@ -82,10 +82,6 @@ pub fn rebuild_hashes(reader: &mut DiscReader) -> Result<()> {
     // Precompute hashes for zeroed sectors.
     const ZERO_H0_BYTES: &[u8] = &[0u8; HASHES_SIZE];
     let zero_h0_hash = hash_bytes(ZERO_H0_BYTES);
-    let mut zero_h1_hash = Sha1::new();
-    for _ in 0..NUM_H0_HASHES {
-        zero_h1_hash.update(zero_h0_hash);
-    }
 
     let partitions = reader.partitions();
     let mut hash_tables = Vec::with_capacity(partitions.len());
@@ -171,6 +167,7 @@ pub fn rebuild_hashes(reader: &mut DiscReader) -> Result<()> {
             .context("Seeking to H3 table")?;
         let h3_table: Box<[HashBytes]> =
             read_box_slice(reader, hash_table.h3_hashes.len()).context("Reading H3 table")?;
+        let mut mismatches = 0;
         for (idx, (expected_hash, h3_hash)) in
             h3_table.iter().zip(hash_table.h3_hashes.iter()).enumerate()
         {
@@ -180,11 +177,15 @@ pub fn rebuild_hashes(reader: &mut DiscReader) -> Result<()> {
                 let mut expected_bytes = [0u8; 40];
                 let expected =
                     base16ct::lower::encode_str(expected_hash, &mut expected_bytes).unwrap();
-                log::warn!(
+                log::debug!(
                     "Partition {} H3 table does not match:\n\tindex {}\n\texpected: {}\n\tgot:      {}",
                     part.index, idx, expected, got
                 );
+                mismatches += 1;
             }
+        }
+        if mismatches > 0 {
+            log::warn!("Partition {} H3 table has {} hash mismatches", part.index, mismatches);
         }
     }
 

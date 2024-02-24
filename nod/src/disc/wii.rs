@@ -27,7 +27,10 @@ use crate::{
     DiscHeader, Error, OpenOptions, Result, ResultContext,
 };
 
+/// Size in bytes of the hashes block in a Wii disc sector
 pub(crate) const HASHES_SIZE: usize = 0x400;
+
+/// Size in bytes of the data block in a Wii disc sector (excluding hashes)
 pub(crate) const SECTOR_DATA_SIZE: usize = SECTOR_SIZE - HASHES_SIZE; // 0x7C00
 
 // ppki (Retail)
@@ -312,12 +315,13 @@ impl PartitionWii {
 
 impl Read for PartitionWii {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let partition_sector = (self.pos / SECTOR_DATA_SIZE as u64) as u32;
-        let sector = self.partition.data_start_sector + partition_sector;
-        if sector >= self.partition.data_end_sector {
+        let part_sector = (self.pos / SECTOR_DATA_SIZE as u64) as u32;
+        let abs_sector = self.partition.data_start_sector + part_sector;
+        if abs_sector >= self.partition.data_end_sector {
             return Ok(0);
         }
-        let block_idx = (sector as u64 * SECTOR_SIZE as u64 / self.block_buf.len() as u64) as u32;
+        let block_idx =
+            (abs_sector as u64 * SECTOR_SIZE as u64 / self.block_buf.len() as u64) as u32;
 
         // Read new block if necessary
         if block_idx != self.block_idx {
@@ -327,18 +331,17 @@ impl Read for PartitionWii {
         }
 
         // Decrypt sector if necessary
-        if sector != self.sector {
+        if abs_sector != self.sector {
             self.block.decrypt(
                 self.sector_buf.as_mut(),
                 self.block_buf.as_ref(),
-                block_idx,
-                sector,
+                abs_sector,
                 &self.partition,
             )?;
             if self.verify {
-                verify_hashes(&self.sector_buf, sector)?;
+                verify_hashes(self.sector_buf.as_ref(), part_sector, self.raw_h3_table.as_ref())?;
             }
-            self.sector = sector;
+            self.sector = abs_sector;
         }
 
         let offset = (self.pos % SECTOR_DATA_SIZE as u64) as usize;
@@ -369,9 +372,9 @@ impl Seek for PartitionWii {
 #[inline(always)]
 pub(crate) fn as_digest(slice: &[u8; 20]) -> digest::Output<Sha1> { (*slice).into() }
 
-fn verify_hashes(buf: &[u8; SECTOR_SIZE], sector: u32) -> io::Result<()> {
-    let (mut group, sub_group) = div_rem(sector as usize, 8);
-    group %= 8;
+fn verify_hashes(buf: &[u8; SECTOR_SIZE], part_sector: u32, h3_table: &[u8]) -> io::Result<()> {
+    let (cluster, sector) = div_rem(part_sector as usize, 8);
+    let (group, sub_group) = div_rem(cluster, 8);
 
     // H0 hashes
     for i in 0..31 {
@@ -391,14 +394,14 @@ fn verify_hashes(buf: &[u8; SECTOR_SIZE], sector: u32) -> io::Result<()> {
     {
         let mut hash = Sha1::new();
         hash.update(array_ref![buf, 0, 0x26C]);
-        let expected = as_digest(array_ref![buf, 0x280 + sub_group * 20, 20]);
+        let expected = as_digest(array_ref![buf, 0x280 + sector * 20, 20]);
         let output = hash.finalize();
         if output != expected {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
                     "Invalid H1 hash! (subgroup {:?}) {:x}\n\texpected {:x}",
-                    sub_group, output, expected
+                    sector, output, expected
                 ),
             ));
         }
@@ -408,19 +411,33 @@ fn verify_hashes(buf: &[u8; SECTOR_SIZE], sector: u32) -> io::Result<()> {
     {
         let mut hash = Sha1::new();
         hash.update(array_ref![buf, 0x280, 0xA0]);
-        let expected = as_digest(array_ref![buf, 0x340 + group * 20, 20]);
+        let expected = as_digest(array_ref![buf, 0x340 + sub_group * 20, 20]);
         let output = hash.finalize();
         if output != expected {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
                     "Invalid H2 hash! (group {:?}) {:x}\n\texpected {:x}",
-                    group, output, expected
+                    sub_group, output, expected
                 ),
             ));
         }
     }
-    // TODO H3 hash
+
+    // H3 hash
+    {
+        let mut hash = Sha1::new();
+        hash.update(array_ref![buf, 0x340, 0xA0]);
+        let expected = as_digest(array_ref![h3_table, group * 20, 20]);
+        let output = hash.finalize();
+        if output != expected {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid H3 hash! {:x}\n\texpected {:x}", output, expected),
+            ));
+        }
+    }
+
     Ok(())
 }
 

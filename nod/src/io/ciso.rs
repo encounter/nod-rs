@@ -80,8 +80,6 @@ impl DiscIOCISO {
             None
         };
 
-        // Reset reader
-        inner.reset();
         Ok(Box::new(Self { inner, header, block_map, nkit_header }))
     }
 }

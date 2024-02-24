@@ -135,20 +135,32 @@ pub fn open(filename: &Path) -> Result<Box<dyn BlockIO>> {
     Ok(io)
 }
 
+/// Wii partition information.
 #[derive(Debug, Clone)]
 pub struct PartitionInfo {
+    /// The partition index.
     pub index: usize,
+    /// The kind of disc partition.
     pub kind: PartitionKind,
+    /// The start sector of the partition.
     pub start_sector: u32,
+    /// The start sector of the partition's (encrypted) data.
     pub data_start_sector: u32,
+    /// The end sector of the partition's (encrypted) data.
     pub data_end_sector: u32,
+    /// The AES key for the partition, also known as the "title key".
     pub key: KeyBytes,
+    /// The Wii partition header.
     pub header: Box<WiiPartitionHeader>,
+    /// The disc header within the partition.
     pub disc_header: Box<DiscHeader>,
+    /// The partition header within the partition.
     pub partition_header: Box<PartitionHeader>,
+    /// The hash table for the partition, if rebuilt.
     pub hash_table: Option<HashTable>,
 }
 
+/// The block kind returned by [`BlockIO::read_block`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Block {
     /// Raw data or encrypted Wii partition data
@@ -171,29 +183,28 @@ impl Block {
         self,
         out: &mut [u8; SECTOR_SIZE],
         data: &[u8],
-        block_idx: u32,
         abs_sector: u32,
         partition: &PartitionInfo,
     ) -> io::Result<()> {
-        let rel_sector = abs_sector - self.start_sector(block_idx, data.len());
+        let part_sector = abs_sector - partition.data_start_sector;
         match self {
             Block::Raw => {
-                out.copy_from_slice(block_sector::<SECTOR_SIZE>(data, rel_sector)?);
+                out.copy_from_slice(block_sector::<SECTOR_SIZE>(data, abs_sector)?);
                 decrypt_sector(out, partition);
             }
             Block::PartDecrypted { has_hashes } => {
-                out.copy_from_slice(block_sector::<SECTOR_SIZE>(data, rel_sector)?);
+                out.copy_from_slice(block_sector::<SECTOR_SIZE>(data, abs_sector)?);
                 if !has_hashes {
-                    rebuild_hash_block(out, abs_sector, partition);
+                    rebuild_hash_block(out, part_sector, partition);
                 }
             }
             Block::Junk => {
-                generate_junk(out, abs_sector, Some(partition), &partition.disc_header);
-                rebuild_hash_block(out, abs_sector, partition);
+                generate_junk(out, part_sector, Some(partition), &partition.disc_header);
+                rebuild_hash_block(out, part_sector, partition);
             }
             Block::Zero => {
                 out.fill(0);
-                rebuild_hash_block(out, abs_sector, partition);
+                rebuild_hash_block(out, part_sector, partition);
             }
         }
         Ok(())
@@ -204,30 +215,29 @@ impl Block {
         self,
         out: &mut [u8; SECTOR_SIZE],
         data: &[u8],
-        block_idx: u32,
         abs_sector: u32,
         partition: &PartitionInfo,
     ) -> io::Result<()> {
-        let rel_sector = abs_sector - self.start_sector(block_idx, data.len());
+        let part_sector = abs_sector - partition.data_start_sector;
         match self {
             Block::Raw => {
-                out.copy_from_slice(block_sector::<SECTOR_SIZE>(data, rel_sector)?);
+                out.copy_from_slice(block_sector::<SECTOR_SIZE>(data, abs_sector)?);
             }
             Block::PartDecrypted { has_hashes } => {
-                out.copy_from_slice(block_sector::<SECTOR_SIZE>(data, rel_sector)?);
+                out.copy_from_slice(block_sector::<SECTOR_SIZE>(data, abs_sector)?);
                 if !has_hashes {
-                    rebuild_hash_block(out, abs_sector, partition);
+                    rebuild_hash_block(out, part_sector, partition);
                 }
                 encrypt_sector(out, partition);
             }
             Block::Junk => {
-                generate_junk(out, abs_sector, Some(partition), &partition.disc_header);
-                rebuild_hash_block(out, abs_sector, partition);
+                generate_junk(out, part_sector, Some(partition), &partition.disc_header);
+                rebuild_hash_block(out, part_sector, partition);
                 encrypt_sector(out, partition);
             }
             Block::Zero => {
                 out.fill(0);
-                rebuild_hash_block(out, abs_sector, partition);
+                rebuild_hash_block(out, part_sector, partition);
                 encrypt_sector(out, partition);
             }
         }
@@ -239,16 +249,12 @@ impl Block {
         self,
         out: &mut [u8; SECTOR_SIZE],
         data: &[u8],
-        block_idx: u32,
         abs_sector: u32,
         disc_header: &DiscHeader,
     ) -> io::Result<()> {
         match self {
             Block::Raw => {
-                out.copy_from_slice(block_sector::<SECTOR_SIZE>(
-                    data,
-                    abs_sector - self.start_sector(block_idx, data.len()),
-                )?);
+                out.copy_from_slice(block_sector::<SECTOR_SIZE>(data, abs_sector)?);
             }
             Block::PartDecrypted { .. } => {
                 return Err(io::Error::new(
@@ -261,11 +267,6 @@ impl Block {
         }
         Ok(())
     }
-
-    /// Returns the start sector of the block.
-    fn start_sector(&self, index: u32, block_size: usize) -> u32 {
-        (index as u64 * block_size as u64 / SECTOR_SIZE as u64) as u32
-    }
 }
 
 #[inline(always)]
@@ -276,14 +277,15 @@ fn block_sector<const N: usize>(data: &[u8], sector_idx: u32) -> io::Result<&[u8
             format!("Expected block size {} to be a multiple of {}", data.len(), N),
         ));
     }
-    let offset = sector_idx as usize * N;
+    let rel_sector = sector_idx % (data.len() / N) as u32;
+    let offset = rel_sector as usize * N;
     data.get(offset..offset + N)
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
                     "Sector {} out of range (block size {}, sector size {})",
-                    sector_idx,
+                    rel_sector,
                     data.len(),
                     N
                 ),
@@ -298,12 +300,11 @@ fn generate_junk(
     partition: Option<&PartitionInfo>,
     disc_header: &DiscHeader,
 ) {
-    let mut pos = if let Some(partition) = partition {
-        (sector - partition.data_start_sector) as u64 * SECTOR_DATA_SIZE as u64
+    let (mut pos, mut offset) = if partition.is_some() {
+        (sector as u64 * SECTOR_DATA_SIZE as u64, HASHES_SIZE)
     } else {
-        sector as u64 * SECTOR_SIZE as u64
+        (sector as u64 * SECTOR_SIZE as u64, 0)
     };
-    let mut offset = if partition.is_some() { HASHES_SIZE } else { 0 };
     out[..offset].fill(0);
     while offset < SECTOR_SIZE {
         // The LFG spans a single sector of the decrypted data,
@@ -318,11 +319,11 @@ fn generate_junk(
     }
 }
 
-fn rebuild_hash_block(out: &mut [u8; SECTOR_SIZE], sector: u32, partition: &PartitionInfo) {
+fn rebuild_hash_block(out: &mut [u8; SECTOR_SIZE], part_sector: u32, partition: &PartitionInfo) {
     let Some(hash_table) = partition.hash_table.as_ref() else {
         return;
     };
-    let sector_idx = (sector - partition.data_start_sector) as usize;
+    let sector_idx = part_sector as usize;
     let h0_hashes: &[u8; 0x26C] =
         transmute_ref!(array_ref![hash_table.h0_hashes, sector_idx * 31, 31]);
     out[0..0x26C].copy_from_slice(h0_hashes);
