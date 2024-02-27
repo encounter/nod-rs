@@ -768,9 +768,7 @@ impl BlockIO for DiscIOWIA {
                 ));
             }
 
-            // Calculate the group offset
-            let group_offset = rd.raw_data_offset.get() + (group_index * chunk_size) as u64;
-            (rd.group_index.get() + group_index, group_sector, group_offset)
+            (rd.group_index.get() + group_index, group_sector, 0)
         };
 
         // Fetch the group
