@@ -13,7 +13,7 @@ use crate::{
     array_ref,
     disc::{
         gcn::{read_part_meta, PartitionGC},
-        PartitionBase, PartitionKind, PartitionMeta, SECTOR_SIZE,
+        PartitionBase, PartitionMeta, SECTOR_SIZE,
     },
     fst::{Node, NodeKind},
     io::{
@@ -68,18 +68,6 @@ static_assert!(size_of::<WiiPartEntry>() == 8);
 
 impl WiiPartEntry {
     pub(crate) fn offset(&self) -> u64 { (self.offset.get() as u64) << 2 }
-}
-
-#[derive(Debug, PartialEq)]
-pub(crate) struct WiiPartInfo {
-    pub(crate) group_idx: u32,
-    pub(crate) part_idx: u32,
-    pub(crate) offset: u64,
-    pub(crate) kind: PartitionKind,
-    pub(crate) header: WiiPartitionHeader,
-    pub(crate) junk_id: [u8; 4],
-    pub(crate) junk_start: u64,
-    pub(crate) title_key: KeyBytes,
 }
 
 pub(crate) const WII_PART_GROUP_OFF: u64 = 0x40000;

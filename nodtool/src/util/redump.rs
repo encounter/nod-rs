@@ -1,6 +1,6 @@
 use std::{mem::size_of, str};
 
-use nod::{array_ref, SECTOR_SIZE};
+use nod::array_ref;
 use zerocopy::{FromBytes, FromZeroes};
 
 #[derive(Clone, Debug)]
@@ -9,7 +9,6 @@ pub struct GameResult {
     pub crc32: u32,
     pub md5: [u8; 16],
     pub sha1: [u8; 20],
-    pub size: u64,
 }
 
 pub fn find_by_crc32(crc32: u32) -> Option<GameResult> {
@@ -30,13 +29,7 @@ pub fn find_by_crc32(crc32: u32) -> Option<GameResult> {
     let offset = entry.string_table_offset as usize;
     let name_size = u32::from_ne_bytes(*array_ref![string_table, offset, 4]) as usize;
     let name = str::from_utf8(&string_table[offset + 4..offset + 4 + name_size]).unwrap();
-    Some(GameResult {
-        name,
-        crc32: entry.crc32,
-        md5: entry.md5,
-        sha1: entry.sha1,
-        size: entry.sectors as u64 * SECTOR_SIZE as u64,
-    })
+    Some(GameResult { name, crc32: entry.crc32, md5: entry.md5, sha1: entry.sha1 })
 }
 
 #[repr(C, align(4))]

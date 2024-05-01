@@ -1,13 +1,6 @@
 mod argp_version;
 
-use std::{
-    env,
-    error::Error,
-    ffi::OsStr,
-    fmt,
-    path::PathBuf,
-    str::FromStr,
-};
+use std::{env, error::Error, ffi::OsStr, fmt, path::PathBuf, str::FromStr};
 
 use argp::{FromArgValue, FromArgs};
 use enable_ansi_support::enable_ansi_support;
