@@ -161,7 +161,7 @@ pub struct WIADisc {
     ///
     /// RVZ only:
     /// > This is signed (instead of unsigned) to support negative compression levels in
-    ///   [Zstandard](WIACompression::Zstandard) (RVZ only).
+    /// > [Zstandard](WIACompression::Zstandard) (RVZ only).
     pub compression_level: I32,
     /// The size of the chunks that data is divided into.
     ///
@@ -170,13 +170,13 @@ pub struct WIADisc {
     ///
     /// RVZ only:
     /// > Chunk sizes smaller than 2 MiB are supported. The following applies when using a chunk size
-    ///   smaller than 2 MiB:
+    /// > smaller than 2 MiB:
     /// > - The chunk size must be at least 32 KiB and must be a power of two. (Just like with WIA,
-    ///     sizes larger than 2 MiB do not have to be a power of two, they just have to be an integer
-    ///     multiple of 2 MiB.)
+    /// >   sizes larger than 2 MiB do not have to be a power of two, they just have to be an integer
+    /// >   multiple of 2 MiB.)
     /// > - For Wii partition data, each chunk contains one [WIAExceptionList] which contains
-    ///     exceptions for that chunk (and no other chunks). Offset 0 refers to the first hash of the
-    ///     current chunk, not the first hash of the full 2 MiB of data.
+    /// >   exceptions for that chunk (and no other chunks). Offset 0 refers to the first hash of the
+    /// >   current chunk, not the first hash of the full 2 MiB of data.
     pub chunk_size: U32,
     /// The first 0x80 bytes of the disc image.
     pub disc_head: [u8; DISC_HEAD_SIZE],

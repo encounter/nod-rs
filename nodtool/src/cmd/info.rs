@@ -9,13 +9,13 @@ use crate::util::{display, shared::print_header};
 #[derive(FromArgs, Debug)]
 /// Displays information about disc images.
 #[argp(subcommand, name = "info")]
-pub struct InfoArgs {
+pub struct Args {
     #[argp(positional)]
     /// Path to disc image(s)
     file: Vec<PathBuf>,
 }
 
-pub fn info(args: InfoArgs) -> nod::Result<()> {
+pub fn run(args: Args) -> nod::Result<()> {
     for file in &args.file {
         info_file(file)?;
     }

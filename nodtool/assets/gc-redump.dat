@@ -3,9 +3,9 @@
 <datafile>
 	<header>
 		<name>Nintendo - GameCube</name>
-		<description>Nintendo - GameCube - Discs (1989) (2024-02-13 01-56-25)</description>
-		<version>2024-02-13 01-56-25</version>
-		<date>2024-02-13 01-56-25</date>
+		<description>Nintendo - GameCube - Discs (1992) (2024-06-02 00-38-06)</description>
+		<version>2024-06-02 00-38-06</version>
+		<date>2024-06-02 00-38-06</date>
 		<author>redump.org</author>
 		<homepage>redump.org</homepage>
 		<url>http://redump.org/</url>
@@ -5376,7 +5376,7 @@
 		<rom name="Ribbit King (USA) (En,Es).iso" size="1459978240" crc="e46d465d" md5="67b83d2ef427326b8f69e995fa104245" sha1="1d6cc36ec5ffa402d0d898b81d71fc778c34b34a"/>
 	</game>
 	<game name="Ribbit King Plus! (USA) (Bonus Disc)">
-		<category>Games</category>
+		<category>Bonus Discs</category>
 		<description>Ribbit King Plus! (USA) (Bonus Disc)</description>
 		<rom name="Ribbit King Plus! (USA) (Bonus Disc).iso" size="1459978240" crc="e5e731eb" md5="a7c4d17e34bade211b797fd3c7130fc0" sha1="3d6c301bbc54b0939307aa8772e008ac467215dd"/>
 	</game>
@@ -9100,10 +9100,10 @@
 		<description>Action Replay for GameCube (Europe) (En,Fr,De,Es,It,Pt) (Unl) (v1.14b)</description>
 		<rom name="Action Replay for GameCube (Europe) (En,Fr,De,Es,It,Pt) (Unl) (v1.14b).iso" size="1459978240" crc="f61cf908" md5="bb59fa5ce23cde960da07150915b73b5" sha1="902309465c6f9a9933097f74aff0e4b6df338204"/>
 	</game>
-	<game name="Cube CD 01 (20) (Europe) (Unl)">
+	<game name="Cube CD 01 (20) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 01 (20) (Europe) (Unl)</description>
-		<rom name="Cube CD 01 (20) (Europe) (Unl).iso" size="1459978240" crc="3bda1560" md5="ba8dd80ae7c11b51c0a609d99c07a8b6" sha1="c7abf65ee74b15619afa8277f2ca59ed57d247df"/>
+		<description>Cube CD 01 (20) (UK) (Unl)</description>
+		<rom name="Cube CD 01 (20) (UK) (Unl).iso" size="1459978240" crc="3bda1560" md5="ba8dd80ae7c11b51c0a609d99c07a8b6" sha1="c7abf65ee74b15619afa8277f2ca59ed57d247df"/>
 	</game>
 	<game name="Space Raiders (Korea)">
 		<category>Games</category>
@@ -9120,50 +9120,50 @@
 		<description>Action Replay Ultimate Cheats fuer Pokemon Colosseum (Germany) (Unl)</description>
 		<rom name="Action Replay Ultimate Cheats fuer Pokemon Colosseum (Germany) (Unl).iso" size="1459978240" crc="371898c1" md5="57ce534db0a790b40691860b42b76cc3" sha1="6850df1182aadc8d50a9baa39b7f36982f10f18a"/>
 	</game>
-	<game name="Cube CD 02 (21) (Europe) (Unl)">
+	<game name="Cube CD 02 (21) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 02 (21) (Europe) (Unl)</description>
-		<rom name="Cube CD 02 (21) (Europe) (Unl).iso" size="1459978240" crc="564bddf9" md5="e3e55b7ba681f9f0f9c107245df731d4" sha1="29f48aea1763f86760b2dafb9d528c435bfdfeed"/>
+		<description>Cube CD 02 (21) (UK) (Unl)</description>
+		<rom name="Cube CD 02 (21) (UK) (Unl).iso" size="1459978240" crc="564bddf9" md5="e3e55b7ba681f9f0f9c107245df731d4" sha1="29f48aea1763f86760b2dafb9d528c435bfdfeed"/>
 	</game>
-	<game name="Cube CD 03 (22) (Europe) (Unl)">
+	<game name="Cube CD 03 (22) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 03 (22) (Europe) (Unl)</description>
-		<rom name="Cube CD 03 (22) (Europe) (Unl).iso" size="1459978240" crc="4d3bc980" md5="63183383a906a65cda29c30d35c8026a" sha1="9e0d0fc0c61e284542bde3c6c5fa9b04105df612"/>
+		<description>Cube CD 03 (22) (UK) (Unl)</description>
+		<rom name="Cube CD 03 (22) (UK) (Unl).iso" size="1459978240" crc="4d3bc980" md5="63183383a906a65cda29c30d35c8026a" sha1="9e0d0fc0c61e284542bde3c6c5fa9b04105df612"/>
 	</game>
-	<game name="Cube CD 04 (23) (Europe) (Unl)">
+	<game name="Cube CD 04 (23) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 04 (23) (Europe) (Unl)</description>
-		<rom name="Cube CD 04 (23) (Europe) (Unl).iso" size="1459978240" crc="ceb11a37" md5="570491e09928e0214be8c2d074684a9d" sha1="b4f382b2d25ba4726af1a0754e600275445f6951"/>
+		<description>Cube CD 04 (23) (UK) (Unl)</description>
+		<rom name="Cube CD 04 (23) (UK) (Unl).iso" size="1459978240" crc="ceb11a37" md5="570491e09928e0214be8c2d074684a9d" sha1="b4f382b2d25ba4726af1a0754e600275445f6951"/>
 	</game>
-	<game name="Cube CD 05 (24) (Europe) (Unl)">
+	<game name="Cube CD 05 (24) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 05 (24) (Europe) (Unl)</description>
-		<rom name="Cube CD 05 (24) (Europe) (Unl).iso" size="1459978240" crc="2188e0bf" md5="a6aa526a5d2556905d7a61d4b7e6610b" sha1="a1f4a282ffd9dbfaa22b76065404b8737ea9139e"/>
+		<description>Cube CD 05 (24) (UK) (Unl)</description>
+		<rom name="Cube CD 05 (24) (UK) (Unl).iso" size="1459978240" crc="2188e0bf" md5="a6aa526a5d2556905d7a61d4b7e6610b" sha1="a1f4a282ffd9dbfaa22b76065404b8737ea9139e"/>
 	</game>
-	<game name="Cube CD 06 (25) (Europe) (Unl)">
+	<game name="Cube CD 06 (25) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 06 (25) (Europe) (Unl)</description>
-		<rom name="Cube CD 06 (25) (Europe) (Unl).iso" size="1459978240" crc="20843654" md5="2a91e8400172225f20c10fd2f6b2327d" sha1="28b59d6c1289655db9961bf10bacf81401ad6836"/>
+		<description>Cube CD 06 (25) (UK) (Unl)</description>
+		<rom name="Cube CD 06 (25) (UK) (Unl).iso" size="1459978240" crc="20843654" md5="2a91e8400172225f20c10fd2f6b2327d" sha1="28b59d6c1289655db9961bf10bacf81401ad6836"/>
 	</game>
-	<game name="Cube CD 07 (26) (Europe) (Unl)">
+	<game name="Cube CD 07 (26) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 07 (26) (Europe) (Unl)</description>
-		<rom name="Cube CD 07 (26) (Europe) (Unl).iso" size="1459978240" crc="094e050d" md5="9ba9a23a6478773a1b51cf2619bbc498" sha1="902c20039d49000b43e0ed6da972aa2846461bfb"/>
+		<description>Cube CD 07 (26) (UK) (Unl)</description>
+		<rom name="Cube CD 07 (26) (UK) (Unl).iso" size="1459978240" crc="094e050d" md5="9ba9a23a6478773a1b51cf2619bbc498" sha1="902c20039d49000b43e0ed6da972aa2846461bfb"/>
 	</game>
-	<game name="Cube CD 08 (27) (Europe) (Unl)">
+	<game name="Cube CD 08 (27) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 08 (27) (Europe) (Unl)</description>
-		<rom name="Cube CD 08 (27) (Europe) (Unl).iso" size="1459978240" crc="a7648498" md5="d11e4b0672880d9fdcae762eee4f919a" sha1="b06488214824a2e1eaf215eb792d2767f6472e3e"/>
+		<description>Cube CD 08 (27) (UK) (Unl)</description>
+		<rom name="Cube CD 08 (27) (UK) (Unl).iso" size="1459978240" crc="a7648498" md5="d11e4b0672880d9fdcae762eee4f919a" sha1="b06488214824a2e1eaf215eb792d2767f6472e3e"/>
 	</game>
-	<game name="Cube CD 09 (28) (Europe) (Unl)">
+	<game name="Cube CD 09 (28) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 09 (28) (Europe) (Unl)</description>
-		<rom name="Cube CD 09 (28) (Europe) (Unl).iso" size="1459978240" crc="77a5a747" md5="d659ae6d451d6253ef1bd3cf6bcf8fe2" sha1="561511a150af7239e8b740d398315c626ecb8eb6"/>
+		<description>Cube CD 09 (28) (UK) (Unl)</description>
+		<rom name="Cube CD 09 (28) (UK) (Unl).iso" size="1459978240" crc="77a5a747" md5="d659ae6d451d6253ef1bd3cf6bcf8fe2" sha1="561511a150af7239e8b740d398315c626ecb8eb6"/>
 	</game>
-	<game name="Cube CD 10 (29) (Europe) (Unl)">
+	<game name="Cube CD 10 (29) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 10 (29) (Europe) (Unl)</description>
-		<rom name="Cube CD 10 (29) (Europe) (Unl).iso" size="1459978240" crc="d58bb1d1" md5="7aa303a1ee2cca606eb7293d1e5d40e1" sha1="3643191bacbb49b3a1c10a302f36dd2ecd76ac70"/>
+		<description>Cube CD 10 (29) (UK) (Unl)</description>
+		<rom name="Cube CD 10 (29) (UK) (Unl).iso" size="1459978240" crc="d58bb1d1" md5="7aa303a1ee2cca606eb7293d1e5d40e1" sha1="3643191bacbb49b3a1c10a302f36dd2ecd76ac70"/>
 	</game>
 	<game name="Action Replay for GameCube (Europe) (Unl) (v1.0E)">
 		<category>Applications</category>
@@ -9175,25 +9175,25 @@
 		<description>Nickelodeon SpongeBob SquarePants - Creatuur van de Krokante Krab (Netherlands)</description>
 		<rom name="Nickelodeon SpongeBob SquarePants - Creatuur van de Krokante Krab (Netherlands).iso" size="1459978240" crc="58dc71d7" md5="45df2c017c82f4737ed154f3c53e0bfe" sha1="d1da9a9aede1c44063f066da35623ff9a92c3b8c"/>
 	</game>
-	<game name="Cube CD 11 (30) (Europe) (Unl)">
+	<game name="Cube CD 11 (30) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 11 (30) (Europe) (Unl)</description>
-		<rom name="Cube CD 11 (30) (Europe) (Unl).iso" size="1459978240" crc="de08bb29" md5="00a76920368c9719c6767b5d739eb5a9" sha1="9bcb7602cee82c533d950b9a424a5c793760a9ed"/>
+		<description>Cube CD 11 (30) (UK) (Unl)</description>
+		<rom name="Cube CD 11 (30) (UK) (Unl).iso" size="1459978240" crc="de08bb29" md5="00a76920368c9719c6767b5d739eb5a9" sha1="9bcb7602cee82c533d950b9a424a5c793760a9ed"/>
 	</game>
-	<game name="Cube CD 12 (31) (Europe) (Unl)">
+	<game name="Cube CD 12 (31) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 12 (31) (Europe) (Unl)</description>
-		<rom name="Cube CD 12 (31) (Europe) (Unl).iso" size="1459978240" crc="67acea2c" md5="5d92c8e5057945c0944a0a4cbc5aa068" sha1="810c918a0469d1cd054cf37d2829ecfb25091c08"/>
+		<description>Cube CD 12 (31) (UK) (Unl)</description>
+		<rom name="Cube CD 12 (31) (UK) (Unl).iso" size="1459978240" crc="67acea2c" md5="5d92c8e5057945c0944a0a4cbc5aa068" sha1="810c918a0469d1cd054cf37d2829ecfb25091c08"/>
 	</game>
-	<game name="Cube CD 13 (32) (Europe) (Unl)">
+	<game name="Cube CD 13 (32) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 13 (32) (Europe) (Unl)</description>
-		<rom name="Cube CD 13 (32) (Europe) (Unl).iso" size="1459978240" crc="4ee5dc34" md5="879a354177cbe51f602269480c423ecd" sha1="1961a864c80d92de323b710ca2125bf45806473f"/>
+		<description>Cube CD 13 (32) (UK) (Unl)</description>
+		<rom name="Cube CD 13 (32) (UK) (Unl).iso" size="1459978240" crc="4ee5dc34" md5="879a354177cbe51f602269480c423ecd" sha1="1961a864c80d92de323b710ca2125bf45806473f"/>
 	</game>
-	<game name="Cube CD 15 (34) (Europe) (Unl)">
+	<game name="Cube CD 15 (34) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 15 (34) (Europe) (Unl)</description>
-		<rom name="Cube CD 15 (34) (Europe) (Unl).iso" size="1459978240" crc="4b9b91e6" md5="08522ad068345eca61ea22dc92f6cb45" sha1="2f362a1547d958e3d772fe9d8c400bc57e5d17f4"/>
+		<description>Cube CD 15 (34) (UK) (Unl)</description>
+		<rom name="Cube CD 15 (34) (UK) (Unl).iso" size="1459978240" crc="4b9b91e6" md5="08522ad068345eca61ea22dc92f6cb45" sha1="2f362a1547d958e3d772fe9d8c400bc57e5d17f4"/>
 	</game>
 	<game name="FreeLoader for GameCube (USA, Europe) (Unl) (v1.06b)">
 		<category>Applications</category>
@@ -9225,30 +9225,30 @@
 		<description>2002 FIFA World Cup (France)</description>
 		<rom name="2002 FIFA World Cup (France).iso" size="1459978240" crc="f3de87a7" md5="d223250f71b82efe411d4710bd2c9d22" sha1="a88bd9f7d619df59558d2043b57730d3e23935b4"/>
 	</game>
-	<game name="Cube CD 16 (35) (Europe) (Unl)">
+	<game name="Cube CD 16 (35) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 16 (35) (Europe) (Unl)</description>
-		<rom name="Cube CD 16 (35) (Europe) (Unl).iso" size="1459978240" crc="e5c0156e" md5="ed3ba85d06eba0f60f84891e1f849d44" sha1="20e01588318a0aa88277f941b4e625bea34cf1ca"/>
+		<description>Cube CD 16 (35) (UK) (Unl)</description>
+		<rom name="Cube CD 16 (35) (UK) (Unl).iso" size="1459978240" crc="e5c0156e" md5="ed3ba85d06eba0f60f84891e1f849d44" sha1="20e01588318a0aa88277f941b4e625bea34cf1ca"/>
 	</game>
-	<game name="Cube CD 17 (36) (Europe) (Unl)">
+	<game name="Cube CD 17 (36) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 17 (36) (Europe) (Unl)</description>
-		<rom name="Cube CD 17 (36) (Europe) (Unl).iso" size="1459978240" crc="9e7dc646" md5="5d381c783a736b73bbcb5133b39c181e" sha1="8cf84262a897d440fe7a18e2b85bada188534cad"/>
+		<description>Cube CD 17 (36) (UK) (Unl)</description>
+		<rom name="Cube CD 17 (36) (UK) (Unl).iso" size="1459978240" crc="9e7dc646" md5="5d381c783a736b73bbcb5133b39c181e" sha1="8cf84262a897d440fe7a18e2b85bada188534cad"/>
 	</game>
-	<game name="Cube CD 18 (37) (Europe) (Unl)">
+	<game name="Cube CD 18 (37) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 18 (37) (Europe) (Unl)</description>
-		<rom name="Cube CD 18 (37) (Europe) (Unl).iso" size="1459978240" crc="1be165b7" md5="123af675aac82a2f6c4a51c297353336" sha1="ec1c5307e8a5c06c3181ca4125ba7e2b5abe8a2c"/>
+		<description>Cube CD 18 (37) (UK) (Unl)</description>
+		<rom name="Cube CD 18 (37) (UK) (Unl).iso" size="1459978240" crc="1be165b7" md5="123af675aac82a2f6c4a51c297353336" sha1="ec1c5307e8a5c06c3181ca4125ba7e2b5abe8a2c"/>
 	</game>
-	<game name="Cube CD 19 (38) (Europe) (Unl)">
+	<game name="Cube CD 19 (38) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 19 (38) (Europe) (Unl)</description>
-		<rom name="Cube CD 19 (38) (Europe) (Unl).iso" size="1459978240" crc="1570e92e" md5="fd0dee6c5b4850e9ceab350721528314" sha1="b347fece4943897882e2a38b14c5691c36f2b023"/>
+		<description>Cube CD 19 (38) (UK) (Unl)</description>
+		<rom name="Cube CD 19 (38) (UK) (Unl).iso" size="1459978240" crc="1570e92e" md5="fd0dee6c5b4850e9ceab350721528314" sha1="b347fece4943897882e2a38b14c5691c36f2b023"/>
 	</game>
-	<game name="Cube CD 20 (40) (Europe) (Unl)">
+	<game name="Cube CD 20 (40) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 20 (40) (Europe) (Unl)</description>
-		<rom name="Cube CD 20 (40) (Europe) (Unl).iso" size="1459978240" crc="eb7f7bc6" md5="1a4ba7a7d5bd2a195c0c4a4426940239" sha1="571dc6e8aa538e2501f89a5706b23b8f9e170e8f"/>
+		<description>Cube CD 20 (40) (UK) (Unl)</description>
+		<rom name="Cube CD 20 (40) (UK) (Unl).iso" size="1459978240" crc="eb7f7bc6" md5="1a4ba7a7d5bd2a195c0c4a4426940239" sha1="571dc6e8aa538e2501f89a5706b23b8f9e170e8f"/>
 	</game>
 	<game name="SRS - Street Racing Syndicate (Europe) (En,Fr,De,Es,It)">
 		<category>Games</category>
@@ -9475,10 +9475,10 @@
 		<description>Gekkan Nintendo Tentou Demo 2003.10.1 (Japan) (Rev 1)</description>
 		<rom name="Gekkan Nintendo Tentou Demo 2003.10.1 (Japan) (Rev 1).iso" size="1459978240" crc="029014e4" md5="c7dcbdc2f69f048f10f31fdac1b5b785" sha1="0989d02c862580d52da060fd2f2de5e5d249dea3"/>
 	</game>
-	<game name="Cube CD 14 (33) (Europe) (Unl)">
+	<game name="Cube CD 14 (33) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 14 (33) (Europe) (Unl)</description>
-		<rom name="Cube CD 14 (33) (Europe) (Unl).iso" size="1459978240" crc="b21fe659" md5="82109cff554d0ecadb0fffb7030dc5a8" sha1="884052c0eb3f0d515ca0c7b173e0a5dfd8071a35"/>
+		<description>Cube CD 14 (33) (UK) (Unl)</description>
+		<rom name="Cube CD 14 (33) (UK) (Unl).iso" size="1459978240" crc="b21fe659" md5="82109cff554d0ecadb0fffb7030dc5a8" sha1="884052c0eb3f0d515ca0c7b173e0a5dfd8071a35"/>
 	</game>
 	<game name="Action Replay Max (Europe) (En,Fr,De,Es,It,Pt) (Unl)">
 		<category>Applications</category>
@@ -9570,10 +9570,10 @@
 		<description>Gekkan Nintendo Tentou Demo 2006.8.1 (Japan)</description>
 		<rom name="Gekkan Nintendo Tentou Demo 2006.8.1 (Japan).iso" size="1459978240" crc="78927d2f" md5="cffa6161687fd723a32717c197d474bb" sha1="c537ecc5935cd9b284b43c230bb516bc9d3de54b"/>
 	</game>
-	<game name="Cube CD 20 (39) (Europe) (Unl)">
+	<game name="Cube CD 20 (39) (UK) (Unl)">
 		<category>Coverdiscs</category>
-		<description>Cube CD 20 (39) (Europe) (Unl)</description>
-		<rom name="Cube CD 20 (39) (Europe) (Unl).iso" size="1459978240" crc="06b90505" md5="574f91a0dad19815a494a79ba76a6c5d" sha1="bd4a3c28f4e2bcffd7305932a1b6548af455d794"/>
+		<description>Cube CD 20 (39) (UK) (Unl)</description>
+		<rom name="Cube CD 20 (39) (UK) (Unl).iso" size="1459978240" crc="06b90505" md5="574f91a0dad19815a494a79ba76a6c5d" sha1="bd4a3c28f4e2bcffd7305932a1b6548af455d794"/>
 	</game>
 	<game name="Ultimate Codes for Use with Tom Clancy's Splinter Cell (USA) (Unl)">
 		<category>Applications</category>
@@ -9954,5 +9954,20 @@
 		<category>Demos</category>
 		<description>WWE WrestleMania X8 (Japan) (Taikenban)</description>
 		<rom name="WWE WrestleMania X8 (Japan) (Taikenban).iso" size="1459978240" crc="f676c652" md5="c001005e01e02fb02c40c562c7dc4d78" sha1="ace6cf324e04d35d008b12aa681c857d72353d25"/>
+	</game>
+	<game name="Karat GC-you Pro Action Replay - Best Price! Sokukouryaku GC-you Vol. 1 (Japan) (Unl)">
+		<category>Applications</category>
+		<description>Karat GC-you Pro Action Replay - Best Price! Sokukouryaku GC-you Vol. 1 (Japan) (Unl)</description>
+		<rom name="Karat GC-you Pro Action Replay - Best Price! Sokukouryaku GC-you Vol. 1 (Japan) (Unl).iso" size="1459978240" crc="1c41b917" md5="a941c5a462d1e90c1de5c9e169dc7237" sha1="c15db6b3d12ca21086bcd8c9404a4d143ccf1110"/>
+	</game>
+	<game name="Karat GC-you Pro Action Replay PAR GC-you (Japan) (Unl) (v1.07)">
+		<category>Applications</category>
+		<description>Karat GC-you Pro Action Replay PAR GC-you (Japan) (Unl) (v1.07)</description>
+		<rom name="Karat GC-you Pro Action Replay PAR GC-you (Japan) (Unl) (v1.07).iso" size="1459978240" crc="26649910" md5="7993ec33bfc482e29f23293c39c56fc3" sha1="402ee1cd9edf5f445c130bbd5a72b2967e673c22"/>
+	</game>
+	<game name="Evolution Worlds (USA) (Beta)">
+		<category>Preproduction</category>
+		<description>Evolution Worlds (USA) (Beta)</description>
+		<rom name="Evolution Worlds (USA) (Beta).iso" size="1459978240" crc="74e3fbee" md5="f5a5d5d02b8ce369b53e5efcaf2c5d71" sha1="061ba70fe611a7c36a3a99dc52839fc275724f19"/>
 	</game>
 </datafile>

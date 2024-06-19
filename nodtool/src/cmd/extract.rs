@@ -19,9 +19,9 @@ use zerocopy::AsBytes;
 use crate::util::{display, has_extension};
 
 #[derive(FromArgs, Debug)]
-/// Extract a disc image.
+/// Extracts a disc image.
 #[argp(subcommand, name = "extract")]
-pub struct ExtractArgs {
+pub struct Args {
     #[argp(positional)]
     /// Path to disc image
     file: PathBuf,
@@ -40,7 +40,7 @@ pub struct ExtractArgs {
     partition: Option<String>,
 }
 
-pub fn extract(args: ExtractArgs) -> nod::Result<()> {
+pub fn run(args: Args) -> nod::Result<()> {
     let output_dir: PathBuf;
     if let Some(dir) = args.out {
         output_dir = dir;

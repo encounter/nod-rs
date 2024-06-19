@@ -25,11 +25,14 @@ base16ct = "0.2.0"
 crc32fast = "1.4.0"
 digest = "0.10.7"
 enable-ansi-support = "0.2.1"
+hex = { version = "0.4.3", features = ["serde"] }
 indicatif = "0.17.8"
 itertools = "0.12.1"
 log = "0.4.20"
 md-5 = "0.10.6"
 nod = { path = "../nod" }
+quick-xml = { version = "0.31.0", features = ["serialize"] }
+serde = { version = "1.0.197", features = ["derive"] }
 sha1 = "0.10.6"
 size = "0.4.1"
 supports-color = "3.0.0"
@@ -38,9 +41,11 @@ tracing-attributes = "0.1.27"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 xxhash-rust = { version = "0.8.10", features = ["xxh64"] }
 zerocopy = { version = "0.7.32", features = ["alloc", "derive"] }
+zstd = "0.13.1"
 
 [build-dependencies]
 hex = { version = "0.4.3", features = ["serde"] }
 quick-xml = { version = "0.31.0", features = ["serialize"] }
 serde = { version = "1.0.197", features = ["derive"] }
 zerocopy = { version = "0.7.32", features = ["alloc", "derive"] }
+zstd = "0.13.1"
