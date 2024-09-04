@@ -23,20 +23,34 @@ pub const TGC_MAGIC: MagicBytes = [0xae, 0x0f, 0x38, 0xa2];
 #[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
 struct TGCHeader {
+    /// Magic bytes
     magic: MagicBytes,
-    unk1: U32,
+    /// TGC version
+    version: U32,
+    /// Offset to the start of the GCM header
+    header_offset: U32,
+    /// Size of the GCM header
     header_size: U32,
-    disc_area_header_size: U32,
+    /// Offset to the FST
     fst_offset: U32,
+    /// Size of the FST
     fst_size: U32,
+    /// Maximum size of the FST across discs
     fst_max_size: U32,
+    /// Offset to the DOL
     dol_offset: U32,
+    /// Size of the DOL
     dol_size: U32,
-    file_area: U32,
-    file_area_size: U32,
+    /// Offset to user data
+    user_offset: U32,
+    /// Size of user data
+    user_size: U32,
+    /// Offset to the banner
     banner_offset: U32,
+    /// Size of the banner
     banner_size: U32,
-    file_offset_base: U32,
+    /// Original user data offset in the GCM
+    gcm_user_offset: U32,
 }
 
 #[derive(Clone)]
@@ -55,6 +69,12 @@ impl DiscIOTGC {
         if header.magic != TGC_MAGIC {
             return Err(Error::DiscFormat("Invalid TGC magic".to_string()));
         }
+        if header.version.get() != 0 {
+            return Err(Error::DiscFormat(format!(
+                "Unsupported TGC version {}",
+                header.version.get()
+            )));
+        }
 
         // Read FST and adjust offsets
         inner
@@ -69,8 +89,8 @@ impl DiscIOTGC {
             .ok_or_else(|| Error::DiscFormat("Invalid TGC FST".to_string()))?;
         for node in nodes {
             if node.is_file() {
-                node.offset =
-                    node.offset - header.file_offset_base + header.file_area - header.header_size;
+                node.offset = node.offset - header.gcm_user_offset
+                    + (header.user_offset - header.header_offset);
             }
         }
 
@@ -85,7 +105,7 @@ impl BlockIO for DiscIOTGC {
         block: u32,
         _partition: Option<&PartitionInfo>,
     ) -> io::Result<Block> {
-        let offset = self.header.header_size.get() as u64 + block as u64 * SECTOR_SIZE as u64;
+        let offset = self.header.header_offset.get() as u64 + block as u64 * SECTOR_SIZE as u64;
         let total_size = self.inner.len();
         if offset >= total_size {
             // End of file
@@ -109,8 +129,8 @@ impl BlockIO for DiscIOTGC {
                     ..size_of::<DiscHeader>() + size_of::<PartitionHeader>()],
             )
             .unwrap();
-            partition_header.dol_offset = self.header.dol_offset - self.header.header_size;
-            partition_header.fst_offset = self.header.fst_offset - self.header.header_size;
+            partition_header.dol_offset = self.header.dol_offset - self.header.header_offset;
+            partition_header.fst_offset = self.header.fst_offset - self.header.header_offset;
         }
 
         // Copy modified FST to output
@@ -134,7 +154,7 @@ impl BlockIO for DiscIOTGC {
         DiscMeta {
             format: Format::Tgc,
             lossless: true,
-            disc_size: Some(self.inner.len() - self.header.header_size.get() as u64),
+            disc_size: Some(self.inner.len() - self.header.header_offset.get() as u64),
             ..Default::default()
         }
     }

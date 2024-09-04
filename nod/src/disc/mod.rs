@@ -105,9 +105,9 @@ pub struct PartitionHeader {
     pub fst_max_size: U32,
     /// File system table load address
     pub fst_memory_address: U32,
-    /// User position
-    pub user_position: U32,
-    /// User size
+    /// User data offset
+    pub user_offset: U32,
+    /// User data size
     pub user_size: U32,
     /// Padding
     _pad2: [u8; 4],
