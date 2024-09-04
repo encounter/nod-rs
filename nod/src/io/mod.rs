@@ -10,6 +10,7 @@ pub(crate) mod iso;
 pub(crate) mod nfs;
 pub(crate) mod nkit;
 pub(crate) mod split;
+pub(crate) mod tgc;
 pub(crate) mod wbfs;
 pub(crate) mod wia;
 
@@ -40,6 +41,8 @@ pub enum Format {
     Wbfs,
     /// WIA
     Wia,
+    /// TGC
+    Tgc,
 }
 
 impl fmt::Display for Format {
@@ -52,6 +55,7 @@ impl fmt::Display for Format {
             Format::Rvz => write!(f, "RVZ"),
             Format::Wbfs => write!(f, "WBFS"),
             Format::Wia => write!(f, "WIA"),
+            Format::Tgc => write!(f, "TGC"),
         }
     }
 }

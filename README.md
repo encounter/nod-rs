@@ -20,6 +20,7 @@ Currently supported file formats:
 - CISO (+ NKit 2 lossless)
 - NFS (Wii U VC)
 - GCZ
+- TGC
 
 ## CLI tool
 

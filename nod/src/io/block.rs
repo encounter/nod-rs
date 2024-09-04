@@ -114,6 +114,7 @@ pub fn open(filename: &Path) -> Result<Box<dyn BlockIO>> {
         crate::io::wia::WIA_MAGIC | crate::io::wia::RVZ_MAGIC => {
             crate::io::wia::DiscIOWIA::new(path)?
         }
+        crate::io::tgc::TGC_MAGIC => crate::io::tgc::DiscIOTGC::new(path)?,
         _ => crate::io::iso::DiscIOISO::new(path)?,
     };
     if io.block_size_internal() < SECTOR_SIZE as u32

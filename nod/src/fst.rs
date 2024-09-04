@@ -25,7 +25,7 @@ pub struct Node {
     kind: u8,
     // u24 big-endian
     name_offset: [u8; 3],
-    offset: U32,
+    pub(crate) offset: U32,
     length: U32,
 }
 
