@@ -1,6 +1,7 @@
 use std::{
     io,
     io::{Read, Seek, SeekFrom},
+    mem::size_of,
     path::Path,
 };
 
