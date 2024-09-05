@@ -70,12 +70,6 @@ impl DiscIOTGC {
         if header.magic != TGC_MAGIC {
             return Err(Error::DiscFormat("Invalid TGC magic".to_string()));
         }
-        if header.version.get() != 0 {
-            return Err(Error::DiscFormat(format!(
-                "Unsupported TGC version {}",
-                header.version.get()
-            )));
-        }
 
         // Read FST and adjust offsets
         inner
