@@ -24,7 +24,14 @@ Currently supported file formats:
 
 ## CLI tool
 
-This crate includes a command-line tool called `nodtool`. 
+This crate includes a command-line tool called `nodtool`.
+
+Download the latest release from the [releases page](https://github.com/encounter/nod-rs/releases),
+or install it using Cargo:
+
+```shell
+cargo install --locked nodtool
+```
 
 ### info
 
