@@ -30,7 +30,7 @@ indicatif = "0.17.8"
 itertools = "0.12.1"
 log = "0.4.20"
 md-5 = "0.10.6"
-nod = { path = "../nod" }
+nod = { version = "1.2.0", path = "../nod" }
 quick-xml = { version = "0.31.0", features = ["serialize"] }
 serde = { version = "1.0.197", features = ["derive"] }
 sha1 = "0.10.6"
