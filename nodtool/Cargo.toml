@@ -1,6 +1,6 @@
 [package]
 name = "nodtool"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2021"
 rust-version = "1.73.0"
 authors = ["Luke Street <luke@street.dev>"]
@@ -20,32 +20,32 @@ asm = ["md-5/asm", "nod/asm", "sha1/asm"]
 nightly = ["crc32fast/nightly"]
 
 [dependencies]
-argp = "0.3.0"
-base16ct = "0.2.0"
-crc32fast = "1.4.2"
-digest = "0.10.7"
-enable-ansi-support = "0.2.1"
-hex = { version = "0.4.3", features = ["serde"] }
-indicatif = "0.17.8"
-itertools = "0.12.1"
-log = "0.4.20"
-md-5 = "0.10.6"
-nod = { version = "1.2.0", path = "../nod" }
-quick-xml = { version = "0.31.0", features = ["serialize"] }
-serde = { version = "1.0.197", features = ["derive"] }
-sha1 = "0.10.6"
-size = "0.4.1"
-supports-color = "3.0.0"
-tracing = "0.1.40"
-tracing-attributes = "0.1.27"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-xxhash-rust = { version = "0.8.10", features = ["xxh64"] }
-zerocopy = { version = "0.7.32", features = ["alloc", "derive"] }
-zstd = "0.13.1"
+argp = "0.3"
+base16ct = "0.2"
+crc32fast = "1.4"
+digest = "0.10"
+enable-ansi-support = "0.2"
+hex = { version = "0.4", features = ["serde"] }
+indicatif = "0.17"
+itertools = "0.13"
+log = "0.4"
+md-5 = "0.10"
+nod = { version = "1.2", path = "../nod" }
+quick-xml = { version = "0.36", features = ["serialize"] }
+serde = { version = "1.0", features = ["derive"] }
+sha1 = "0.10"
+size = "0.4"
+supports-color = "3.0"
+tracing = "0.1"
+tracing-attributes = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+zerocopy = { version = "0.7", features = ["alloc", "derive"] }
+zstd = "0.13"
 
 [build-dependencies]
-hex = { version = "0.4.3", features = ["serde"] }
-quick-xml = { version = "0.31.0", features = ["serialize"] }
-serde = { version = "1.0.197", features = ["derive"] }
-zerocopy = { version = "0.7.32", features = ["alloc", "derive"] }
-zstd = "0.13.1"
+hex = { version = "0.4", features = ["serde"] }
+quick-xml = { version = "0.36", features = ["serialize"] }
+serde = { version = "1.0", features = ["derive"] }
+zerocopy = { version = "0.7", features = ["alloc", "derive"] }
+zstd = "0.13"

@@ -4,5 +4,5 @@ resolver = "2"
 
 [profile.release-lto]
 inherits = "release"
-lto = "thin"
+lto = "fat"
 strip = "debuginfo"

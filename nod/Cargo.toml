@@ -1,6 +1,6 @@
 [package]
 name = "nod"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2021"
 rust-version = "1.73.0"
 authors = ["Luke Street <luke@street.dev>"]
@@ -31,11 +31,11 @@ cbc = "0.1"
 digest = "0.10"
 dyn-clone = "1.0"
 encoding_rs = "0.8"
-itertools = "0.12"
-liblzma = { version = "0.2", features = ["static"], optional = true }
+itertools = "0.13"
+liblzma = { version = "0.3", features = ["static"], optional = true }
 log = "0.4"
-miniz_oxide = { version = "0.7", optional = true }
-rayon = "1.8"
+miniz_oxide = { version = "0.8", optional = true }
+rayon = "1.10"
 sha1 = "0.10"
 thiserror = "1.0"
 zerocopy = { version = "0.7", features = ["alloc", "derive"] }

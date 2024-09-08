@@ -33,6 +33,7 @@ static_assert!(size_of::<Node>() == 12);
 
 impl Node {
     /// File system node kind.
+    #[inline]
     pub fn kind(&self) -> NodeKind {
         match self.kind {
             0 => NodeKind::File,
@@ -42,12 +43,15 @@ impl Node {
     }
 
     /// Whether the node is a file.
+    #[inline]
     pub fn is_file(&self) -> bool { self.kind == 0 }
 
     /// Whether the node is a directory.
+    #[inline]
     pub fn is_dir(&self) -> bool { self.kind == 1 }
 
     /// Offset in the string table to the filename.
+    #[inline]
     pub fn name_offset(&self) -> u32 {
         u32::from_be_bytes([0, self.name_offset[0], self.name_offset[1], self.name_offset[2]])
     }
@@ -55,6 +59,7 @@ impl Node {
     /// For files, this is the partition offset of the file data. (Wii: >> 2)
     ///
     /// For directories, this is the parent node index in the FST.
+    #[inline]
     pub fn offset(&self, is_wii: bool) -> u64 {
         if is_wii && self.kind == 0 {
             self.offset.get() as u64 * 4
@@ -68,6 +73,7 @@ impl Node {
     /// For directories, this is the child end index in the FST.
     ///
     /// Number of child files and directories recursively is `length - offset`.
+    #[inline]
     pub fn length(&self) -> u64 { self.length.get() as u64 }
 }
 
@@ -81,6 +87,7 @@ pub struct Fst<'a> {
 
 impl<'a> Fst<'a> {
     /// Create a new FST view from a buffer.
+    #[allow(clippy::missing_inline_in_public_items)]
     pub fn new(buf: &'a [u8]) -> Result<Self, &'static str> {
         let Some(root_node) = Node::ref_from_prefix(buf) else {
             return Err("FST root node not found");
@@ -96,9 +103,11 @@ impl<'a> Fst<'a> {
     }
 
     /// Iterate over the nodes in the FST.
+    #[inline]
     pub fn iter(&self) -> FstIter { FstIter { fst: self, idx: 1 } }
 
     /// Get the name of a node.
+    #[allow(clippy::missing_inline_in_public_items)]
     pub fn get_name(&self, node: &Node) -> Result<Cow<str>, String> {
         let name_buf = self.string_table.get(node.name_offset() as usize..).ok_or_else(|| {
             format!(
@@ -118,6 +127,7 @@ impl<'a> Fst<'a> {
     }
 
     /// Finds a particular file or directory by path.
+    #[allow(clippy::missing_inline_in_public_items)]
     pub fn find(&self, path: &str) -> Option<(usize, &Node)> {
         let mut split = path.trim_matches('/').split('/');
         let mut current = split.next()?;

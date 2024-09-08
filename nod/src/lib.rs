@@ -1,4 +1,4 @@
-#![warn(missing_docs)]
+#![warn(missing_docs, clippy::missing_inline_in_public_items)]
 //! Library for traversing & reading Nintendo Optical Disc (GameCube and Wii) images.
 //!
 //! Originally based on the C++ library [nod](https://github.com/AxioDL/nod),
@@ -92,10 +92,12 @@ pub enum Error {
 }
 
 impl From<&str> for Error {
+    #[inline]
     fn from(s: &str) -> Error { Error::Other(s.to_string()) }
 }
 
 impl From<String> for Error {
+    #[inline]
     fn from(s: String) -> Error { Error::Other(s) }
 }
 
@@ -109,6 +111,7 @@ pub trait ErrorContext {
 }
 
 impl ErrorContext for std::io::Error {
+    #[inline]
     fn context(self, context: impl Into<String>) -> Error { Error::Io(context.into(), self) }
 }
 
@@ -125,10 +128,12 @@ pub trait ResultContext<T> {
 impl<T, E> ResultContext<T> for Result<T, E>
 where E: ErrorContext
 {
+    #[inline]
     fn context(self, context: impl Into<String>) -> Result<T> {
         self.map_err(|e| e.context(context))
     }
 
+    #[inline]
     fn with_context<F>(self, f: F) -> Result<T>
     where F: FnOnce() -> String {
         self.map_err(|e| e.context(f()))
@@ -155,11 +160,13 @@ pub struct Disc {
 
 impl Disc {
     /// Opens a disc image from a file path.
+    #[inline]
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Disc> {
         Disc::new_with_options(path, &OpenOptions::default())
     }
 
     /// Opens a disc image from a file path with custom options.
+    #[inline]
     pub fn new_with_options<P: AsRef<Path>>(path: P, options: &OpenOptions) -> Result<Disc> {
         let io = io::block::open(path.as_ref())?;
         let reader = disc::reader::DiscReader::new(io, options)?;
@@ -167,22 +174,27 @@ impl Disc {
     }
 
     /// The disc's primary header.
+    #[inline]
     pub fn header(&self) -> &DiscHeader { self.reader.header() }
 
     /// Returns extra metadata included in the disc file format, if any.
+    #[inline]
     pub fn meta(&self) -> DiscMeta { self.reader.meta() }
 
     /// The disc's size in bytes, or an estimate if not stored by the format.
+    #[inline]
     pub fn disc_size(&self) -> u64 { self.reader.disc_size() }
 
     /// A list of Wii partitions on the disc.
     ///
     /// **GameCube**: This will return an empty slice.
+    #[inline]
     pub fn partitions(&self) -> &[PartitionInfo] { self.reader.partitions() }
 
     /// Opens a decrypted partition read stream for the specified partition index.
     ///
     /// **GameCube**: `index` must always be 0.
+    #[inline]
     pub fn open_partition(&self, index: usize) -> Result<Box<dyn PartitionBase>> {
         self.reader.open_partition(index, &self.options)
     }
@@ -191,15 +203,18 @@ impl Disc {
     /// the specified kind.
     ///
     /// **GameCube**: `kind` must always be [`PartitionKind::Data`].
+    #[inline]
     pub fn open_partition_kind(&self, kind: PartitionKind) -> Result<Box<dyn PartitionBase>> {
         self.reader.open_partition_kind(kind, &self.options)
     }
 }
 
 impl Read for Disc {
+    #[inline]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> { self.reader.read(buf) }
 }
 
 impl Seek for Disc {
+    #[inline]
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> { self.reader.seek(pos) }
 }

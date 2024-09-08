@@ -46,6 +46,7 @@ pub enum Format {
 }
 
 impl fmt::Display for Format {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Format::Iso => write!(f, "ISO"),
@@ -81,6 +82,7 @@ pub enum Compression {
 }
 
 impl fmt::Display for Compression {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Compression::None => write!(f, "None"),

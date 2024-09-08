@@ -10,6 +10,7 @@ pub trait ReadStream: Read + Seek {
     /// Creates a windowed read sub-stream with offset and size.
     ///
     /// Seeks underlying stream immediately.
+    #[inline]
     fn new_window(&mut self, offset: u64, size: u64) -> io::Result<SharedWindowedReadStream> {
         self.seek(SeekFrom::Start(offset))?;
         Ok(SharedWindowedReadStream { base: self.as_dyn(), begin: offset, end: offset + size })
@@ -22,6 +23,7 @@ pub trait ReadStream: Read + Seek {
 impl<T> ReadStream for T
 where T: Read + Seek
 {
+    #[inline]
     fn as_dyn(&mut self) -> &mut dyn ReadStream { self }
 }
 

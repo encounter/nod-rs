@@ -64,9 +64,11 @@ static_assert!(size_of::<DiscHeader>() == 0x400);
 
 impl DiscHeader {
     /// Game ID as a string.
+    #[inline]
     pub fn game_id_str(&self) -> &str { from_utf8(&self.game_id).unwrap_or("[invalid]") }
 
     /// Game title as a string.
+    #[inline]
     pub fn game_title_str(&self) -> &str {
         CStr::from_bytes_until_nul(&self.game_title)
             .ok()
@@ -75,9 +77,11 @@ impl DiscHeader {
     }
 
     /// Whether this is a GameCube disc.
+    #[inline]
     pub fn is_gamecube(&self) -> bool { self.gcn_magic.get() == 0xC2339F3D }
 
     /// Whether this is a Wii disc.
+    #[inline]
     pub fn is_wii(&self) -> bool { self.wii_magic.get() == 0x5D1C9EA3 }
 }
 
@@ -117,6 +121,7 @@ static_assert!(size_of::<PartitionHeader>() == 0x40);
 
 impl PartitionHeader {
     /// Offset within the partition to the main DOL.
+    #[inline]
     pub fn dol_offset(&self, is_wii: bool) -> u64 {
         if is_wii {
             self.dol_offset.get() as u64 * 4
@@ -126,6 +131,7 @@ impl PartitionHeader {
     }
 
     /// Offset within the partition to the file system table (FST).
+    #[inline]
     pub fn fst_offset(&self, is_wii: bool) -> u64 {
         if is_wii {
             self.fst_offset.get() as u64 * 4
@@ -135,6 +141,7 @@ impl PartitionHeader {
     }
 
     /// Size of the file system table (FST).
+    #[inline]
     pub fn fst_size(&self, is_wii: bool) -> u64 {
         if is_wii {
             self.fst_size.get() as u64 * 4
@@ -144,6 +151,7 @@ impl PartitionHeader {
     }
 
     /// Maximum size of the file system table (FST) across multi-disc games.
+    #[inline]
     pub fn fst_max_size(&self, is_wii: bool) -> u64 {
         if is_wii {
             self.fst_max_size.get() as u64 * 4
@@ -171,6 +179,7 @@ pub struct ApploaderHeader {
 
 impl ApploaderHeader {
     /// Apploader build date as a string.
+    #[inline]
     pub fn date_str(&self) -> Option<&str> {
         CStr::from_bytes_until_nul(&self.date).ok().and_then(|c| c.to_str().ok())
     }
@@ -222,6 +231,7 @@ pub enum PartitionKind {
 }
 
 impl Display for PartitionKind {
+    #[inline]
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Data => write!(f, "Data"),
@@ -237,6 +247,7 @@ impl Display for PartitionKind {
 
 impl PartitionKind {
     /// Returns the directory name for the partition kind.
+    #[inline]
     pub fn dir_name(&self) -> Cow<str> {
         match self {
             Self::Data => Cow::Borrowed("DATA"),
@@ -251,6 +262,7 @@ impl PartitionKind {
 }
 
 impl From<u32> for PartitionKind {
+    #[inline]
     fn from(v: u32) -> Self {
         match v {
             0 => Self::Data,
@@ -334,32 +346,39 @@ pub struct PartitionMeta {
 
 impl PartitionMeta {
     /// A view into the disc header.
+    #[inline]
     pub fn header(&self) -> &DiscHeader {
         DiscHeader::ref_from(&self.raw_boot[..size_of::<DiscHeader>()]).unwrap()
     }
 
     /// A view into the partition header.
+    #[inline]
     pub fn partition_header(&self) -> &PartitionHeader {
         PartitionHeader::ref_from(&self.raw_boot[size_of::<DiscHeader>()..]).unwrap()
     }
 
     /// A view into the apploader header.
+    #[inline]
     pub fn apploader_header(&self) -> &ApploaderHeader {
         ApploaderHeader::ref_from_prefix(&self.raw_apploader).unwrap()
     }
 
     /// A view into the file system table (FST).
+    #[inline]
     pub fn fst(&self) -> Result<Fst, &'static str> { Fst::new(&self.raw_fst) }
 
     /// A view into the DOL header.
+    #[inline]
     pub fn dol_header(&self) -> &DolHeader { DolHeader::ref_from_prefix(&self.raw_dol).unwrap() }
 
     /// A view into the ticket. (Wii only)
+    #[inline]
     pub fn ticket(&self) -> Option<&Ticket> {
         self.raw_ticket.as_ref().and_then(|v| Ticket::ref_from(v))
     }
 
     /// A view into the TMD. (Wii only)
+    #[inline]
     pub fn tmd_header(&self) -> Option<&TmdHeader> {
         self.raw_tmd.as_ref().and_then(|v| TmdHeader::ref_from_prefix(v))
     }
