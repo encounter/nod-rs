@@ -428,7 +428,7 @@ dependencies = [
 
 [[package]]
 name = "nod"
-version = "1.2.1"
+version = "1.3.0"
 dependencies = [
  "adler",
  "aes",
@@ -451,7 +451,7 @@ dependencies = [
 
 [[package]]
 name = "nodtool"
-version = "1.2.1"
+version = "1.3.0"
 dependencies = [
  "argp",
  "base16ct",

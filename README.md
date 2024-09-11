@@ -14,6 +14,7 @@ Originally based on the C++ library [nod](https://github.com/AxioDL/nod),
 but does not currently support authoring.
 
 Currently supported file formats:
+
 - ISO (GCM)
 - WIA / RVZ
 - WBFS (+ NKit 2 lossless)
@@ -61,7 +62,7 @@ Converts any supported format to raw ISO.
 
 ```shell
 nodtool convert /path/to/game.wia /path/to/game.iso
-``` 
+```
 
 ### verify
 
@@ -121,8 +122,8 @@ std::io::copy(&mut disc, &mut out)
 
 Licensed under either of
 
-* Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-* MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.
 
