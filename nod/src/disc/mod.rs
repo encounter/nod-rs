@@ -5,6 +5,7 @@ use std::{
     ffi::CStr,
     fmt::{Debug, Display, Formatter},
     io,
+    io::{BufRead, Seek},
     mem::size_of,
     str::from_utf8,
 };
@@ -12,18 +13,18 @@ use std::{
 use dyn_clone::DynClone;
 use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
 
-use crate::{
-    disc::wii::{Ticket, TmdHeader},
-    fst::Node,
-    static_assert,
-    streams::{ReadStream, SharedWindowedReadStream},
-    Fst, Result,
-};
+use crate::{static_assert, Result};
 
+pub(crate) mod fst;
 pub(crate) mod gcn;
 pub(crate) mod hashes;
 pub(crate) mod reader;
+pub(crate) mod streams;
 pub(crate) mod wii;
+
+pub use fst::{Fst, Node, NodeKind};
+pub use streams::FileStream;
+pub use wii::{SignedHeader, Ticket, TicketLimit, TmdHeader};
 
 /// Size in bytes of a disc sector.
 pub const SECTOR_SIZE: usize = 0x8000;
@@ -274,11 +275,11 @@ impl From<u32> for PartitionKind {
 }
 
 /// An open disc partition.
-pub trait PartitionBase: DynClone + ReadStream + Send + Sync {
+pub trait PartitionBase: DynClone + BufRead + Seek + Send + Sync {
     /// Reads the partition header and file system table.
     fn meta(&mut self) -> Result<Box<PartitionMeta>>;
 
-    /// Seeks the read stream to the specified file system node
+    /// Seeks the partition stream to the specified file system node
     /// and returns a windowed stream.
     ///
     /// # Examples
@@ -306,12 +307,7 @@ pub trait PartitionBase: DynClone + ReadStream + Send + Sync {
     ///     Ok(())
     /// }
     /// ```
-    fn open_file(&mut self, node: &Node) -> io::Result<SharedWindowedReadStream>;
-
-    /// The ideal size for buffered reads from this partition.
-    /// GameCube discs have a data block size of 0x8000,
-    /// whereas Wii discs have a data block size of 0x7C00.
-    fn ideal_buffer_size(&self) -> usize;
+    fn open_file(&mut self, node: &Node) -> io::Result<FileStream>;
 }
 
 dyn_clone::clone_trait_object!(PartitionBase);

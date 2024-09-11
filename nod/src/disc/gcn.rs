@@ -1,20 +1,17 @@
 use std::{
-    cmp::min,
     io,
-    io::{Read, Seek, SeekFrom},
+    io::{BufRead, Read, Seek, SeekFrom},
     mem::size_of,
 };
 
 use zerocopy::{FromBytes, FromZeroes};
 
+use super::{
+    ApploaderHeader, DiscHeader, DolHeader, FileStream, Node, PartitionBase, PartitionHeader,
+    PartitionMeta, BI2_SIZE, BOOT_SIZE, SECTOR_SIZE,
+};
 use crate::{
-    disc::{
-        ApploaderHeader, DiscHeader, DolHeader, PartitionBase, PartitionHeader, PartitionMeta,
-        BI2_SIZE, BOOT_SIZE, SECTOR_SIZE,
-    },
-    fst::{Node, NodeKind},
     io::block::{Block, BlockIO},
-    streams::{ReadStream, SharedWindowedReadStream},
     util::read::{read_box, read_box_slice, read_vec},
     Result, ResultContext,
 };
@@ -63,8 +60,8 @@ impl PartitionGC {
     pub fn into_inner(self) -> Box<dyn BlockIO> { self.io }
 }
 
-impl Read for PartitionGC {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+impl BufRead for PartitionGC {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
         let sector = (self.pos / SECTOR_SIZE as u64) as u32;
         let block_idx = (sector as u64 * SECTOR_SIZE as u64 / self.block_buf.len() as u64) as u32;
 
@@ -86,9 +83,20 @@ impl Read for PartitionGC {
         }
 
         let offset = (self.pos % SECTOR_SIZE as u64) as usize;
-        let len = min(buf.len(), SECTOR_SIZE - offset);
-        buf[..len].copy_from_slice(&self.sector_buf[offset..offset + len]);
-        self.pos += len as u64;
+        Ok(&self.sector_buf[offset..])
+    }
+
+    #[inline]
+    fn consume(&mut self, amt: usize) { self.pos += amt as u64; }
+}
+
+impl Read for PartitionGC {
+    #[inline]
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        let buf = self.fill_buf()?;
+        let len = buf.len().min(out.len());
+        out[..len].copy_from_slice(&buf[..len]);
+        self.consume(len);
         Ok(len)
     }
 }
@@ -115,16 +123,19 @@ impl PartitionBase for PartitionGC {
         read_part_meta(self, false)
     }
 
-    fn open_file(&mut self, node: &Node) -> io::Result<SharedWindowedReadStream> {
-        assert_eq!(node.kind(), NodeKind::File);
-        self.new_window(node.offset(false), node.length())
+    fn open_file(&mut self, node: &Node) -> io::Result<FileStream> {
+        if !node.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Node is not a file".to_string(),
+            ));
+        }
+        FileStream::new(self, node.offset(false), node.length())
     }
-
-    fn ideal_buffer_size(&self) -> usize { SECTOR_SIZE }
 }
 
 pub(crate) fn read_part_meta(
-    reader: &mut dyn ReadStream,
+    reader: &mut dyn PartitionBase,
     is_wii: bool,
 ) -> Result<Box<PartitionMeta>> {
     // boot.bin

@@ -192,7 +192,7 @@ impl DiscIONFS {
             let resolved_path = key_path.unwrap();
             File::open(resolved_path.as_path())
                 .map_err(|v| Error::Io(format!("Failed to open {}", resolved_path.display()), v))?
-                .read(&mut self.key)
+                .read_exact(&mut self.key)
                 .map_err(|v| Error::Io(format!("Failed to read {}", resolved_path.display()), v))?;
         }
 

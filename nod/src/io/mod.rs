@@ -15,13 +15,13 @@ pub(crate) mod wbfs;
 pub(crate) mod wia;
 
 /// SHA-1 hash bytes
-pub(crate) type HashBytes = [u8; 20];
+pub type HashBytes = [u8; 20];
 
 /// AES key bytes
-pub(crate) type KeyBytes = [u8; 16];
+pub type KeyBytes = [u8; 16];
 
 /// Magic bytes
-pub(crate) type MagicBytes = [u8; 4];
+pub type MagicBytes = [u8; 4];
 
 /// The disc file format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

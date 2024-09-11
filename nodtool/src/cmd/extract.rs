@@ -2,8 +2,7 @@ use std::{
     borrow::Cow,
     fs,
     fs::File,
-    io,
-    io::{BufWriter, Write},
+    io::{BufRead, Write},
     path::{Path, PathBuf},
 };
 
@@ -197,9 +196,8 @@ fn extract_node(
             Size::from_bytes(node.length()).format().with_base(Base::Base10)
         );
     }
-    let file = File::create(&file_path)
+    let mut file = File::create(&file_path)
         .with_context(|| format!("Creating file {}", display(&file_path)))?;
-    let mut w = BufWriter::with_capacity(partition.ideal_buffer_size(), file);
     let mut r = partition.open_file(node).with_context(|| {
         format!(
             "Opening file {} on disc for reading (offset {}, size {})",
@@ -208,7 +206,16 @@ fn extract_node(
             node.length()
         )
     })?;
-    io::copy(&mut r, &mut w).with_context(|| format!("Extracting file {}", display(&file_path)))?;
-    w.flush().with_context(|| format!("Flushing file {}", display(&file_path)))?;
+    loop {
+        let buf =
+            r.fill_buf().with_context(|| format!("Extracting file {}", display(&file_path)))?;
+        let len = buf.len();
+        if len == 0 {
+            break;
+        }
+        file.write_all(buf).with_context(|| format!("Writing file {}", display(&file_path)))?;
+        r.consume(len);
+    }
+    file.flush().with_context(|| format!("Flushing file {}", display(&file_path)))?;
     Ok(())
 }

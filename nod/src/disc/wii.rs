@@ -1,30 +1,27 @@
 use std::{
-    cmp::min,
     ffi::CStr,
     io,
-    io::{Read, Seek, SeekFrom},
+    io::{BufRead, Read, Seek, SeekFrom},
     mem::size_of,
 };
 
 use sha1::{Digest, Sha1};
 use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
 
+use super::{
+    gcn::{read_part_meta, PartitionGC},
+    DiscHeader, FileStream, Node, PartitionBase, PartitionMeta, SECTOR_SIZE,
+};
 use crate::{
     array_ref,
-    disc::{
-        gcn::{read_part_meta, PartitionGC},
-        PartitionBase, PartitionMeta, SECTOR_SIZE,
-    },
-    fst::{Node, NodeKind},
     io::{
         aes_decrypt,
         block::{Block, BlockIO, PartitionInfo},
         KeyBytes,
     },
     static_assert,
-    streams::{ReadStream, SharedWindowedReadStream},
     util::{div_rem, read::read_box_slice},
-    DiscHeader, Error, OpenOptions, Result, ResultContext,
+    Error, OpenOptions, Result, ResultContext,
 };
 
 /// Size in bytes of the hashes block in a Wii disc sector
@@ -85,6 +82,7 @@ impl WiiPartGroup {
     pub(crate) fn part_entry_off(&self) -> u64 { (self.part_entry_off.get() as u64) << 2 }
 }
 
+/// Signed blob header
 #[derive(Debug, Clone, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
 pub struct SignedHeader {
@@ -97,43 +95,64 @@ pub struct SignedHeader {
 
 static_assert!(size_of::<SignedHeader>() == 0x140);
 
+/// Ticket limit
 #[derive(Debug, Clone, PartialEq, Default, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
-pub struct TicketTimeLimit {
-    pub enable_time_limit: U32,
-    pub time_limit: U32,
+pub struct TicketLimit {
+    /// Limit type
+    pub limit_type: U32,
+    /// Maximum value for the limit
+    pub max_value: U32,
 }
 
-static_assert!(size_of::<TicketTimeLimit>() == 8);
+static_assert!(size_of::<TicketLimit>() == 8);
 
+/// Wii ticket
 #[derive(Debug, Clone, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
 pub struct Ticket {
+    /// Signed blob header
     pub header: SignedHeader,
+    /// Signature issuer
     pub sig_issuer: [u8; 64],
+    /// ECDH data
     pub ecdh: [u8; 60],
+    /// Ticket format version
     pub version: u8,
     _pad1: U16,
+    /// Title key (encrypted)
     pub title_key: KeyBytes,
     _pad2: u8,
+    /// Ticket ID
     pub ticket_id: [u8; 8],
+    /// Console ID
     pub console_id: [u8; 4],
+    /// Title ID
     pub title_id: [u8; 8],
     _pad3: U16,
+    /// Ticket title version
     pub ticket_title_version: U16,
+    /// Permitted titles mask
     pub permitted_titles_mask: U32,
+    /// Permit mask
     pub permit_mask: U32,
+    /// Title export allowed
     pub title_export_allowed: u8,
+    /// Common key index
     pub common_key_idx: u8,
     _pad4: [u8; 48],
+    /// Content access permissions
     pub content_access_permissions: [u8; 64],
     _pad5: [u8; 2],
-    pub time_limits: [TicketTimeLimit; 8],
+    /// Ticket limits
+    pub limits: [TicketLimit; 8],
 }
 
 static_assert!(size_of::<Ticket>() == 0x2A4);
 
 impl Ticket {
+    /// Decrypts the ticket title key using the appropriate common key
+    #[allow(clippy::missing_inline_in_public_items)]
     pub fn decrypt_title_key(&self) -> Result<KeyBytes> {
         let mut iv: KeyBytes = [0; 16];
         iv[..8].copy_from_slice(&self.title_id);
@@ -158,29 +177,48 @@ impl Ticket {
     }
 }
 
+/// Title metadata header
 #[derive(Debug, Clone, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
 pub struct TmdHeader {
+    /// Signed blob header
     pub header: SignedHeader,
+    /// Signature issuer
     pub sig_issuer: [u8; 64],
+    /// Version
     pub version: u8,
+    /// CA CRL version
     pub ca_crl_version: u8,
+    /// Signer CRL version
     pub signer_crl_version: u8,
+    /// Is vWii title
     pub is_vwii: u8,
+    /// IOS ID
     pub ios_id: [u8; 8],
+    /// Title ID
     pub title_id: [u8; 8],
+    /// Title type
     pub title_type: u32,
+    /// Group ID
     pub group_id: U16,
     _pad1: [u8; 2],
+    /// Region
     pub region: U16,
+    /// Ratings
     pub ratings: KeyBytes,
     _pad2: [u8; 12],
+    /// IPC mask
     pub ipc_mask: [u8; 12],
     _pad3: [u8; 18],
+    /// Access flags
     pub access_flags: U32,
+    /// Title version
     pub title_version: U16,
+    /// Number of contents
     pub num_contents: U16,
+    /// Boot index
     pub boot_idx: U16,
+    /// Minor version (unused)
     pub minor_version: U16,
 }
 
@@ -301,12 +339,12 @@ impl PartitionWii {
     }
 }
 
-impl Read for PartitionWii {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+impl BufRead for PartitionWii {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
         let part_sector = (self.pos / SECTOR_DATA_SIZE as u64) as u32;
         let abs_sector = self.partition.data_start_sector + part_sector;
         if abs_sector >= self.partition.data_end_sector {
-            return Ok(0);
+            return Ok(&[]);
         }
         let block_idx =
             (abs_sector as u64 * SECTOR_SIZE as u64 / self.block_buf.len() as u64) as u32;
@@ -333,10 +371,20 @@ impl Read for PartitionWii {
         }
 
         let offset = (self.pos % SECTOR_DATA_SIZE as u64) as usize;
-        let len = min(buf.len(), SECTOR_DATA_SIZE - offset);
-        buf[..len]
-            .copy_from_slice(&self.sector_buf[HASHES_SIZE + offset..HASHES_SIZE + offset + len]);
-        self.pos += len as u64;
+        Ok(&self.sector_buf[HASHES_SIZE + offset..])
+    }
+
+    #[inline]
+    fn consume(&mut self, amt: usize) { self.pos += amt as u64; }
+}
+
+impl Read for PartitionWii {
+    #[inline]
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        let buf = self.fill_buf()?;
+        let len = buf.len().min(out.len());
+        out[..len].copy_from_slice(&buf[..len]);
+        self.consume(len);
         Ok(len)
     }
 }
@@ -440,10 +488,13 @@ impl PartitionBase for PartitionWii {
         Ok(meta)
     }
 
-    fn open_file(&mut self, node: &Node) -> io::Result<SharedWindowedReadStream> {
-        assert_eq!(node.kind(), NodeKind::File);
-        self.new_window(node.offset(true), node.length())
+    fn open_file(&mut self, node: &Node) -> io::Result<FileStream> {
+        if !node.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Node is not a file".to_string(),
+            ));
+        }
+        FileStream::new(self, node.offset(true), node.length())
     }
-
-    fn ideal_buffer_size(&self) -> usize { SECTOR_DATA_SIZE }
 }

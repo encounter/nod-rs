@@ -59,22 +59,19 @@
 //! ```
 
 use std::{
-    io::{Read, Seek},
+    io::{BufRead, Read, Seek},
     path::Path,
 };
 
 pub use disc::{
-    ApploaderHeader, DiscHeader, DolHeader, PartitionBase, PartitionHeader, PartitionKind,
-    PartitionMeta, BI2_SIZE, BOOT_SIZE, SECTOR_SIZE,
+    ApploaderHeader, DiscHeader, DolHeader, FileStream, Fst, Node, NodeKind, PartitionBase,
+    PartitionHeader, PartitionKind, PartitionMeta, SignedHeader, Ticket, TicketLimit, TmdHeader,
+    BI2_SIZE, BOOT_SIZE, SECTOR_SIZE,
 };
-pub use fst::{Fst, Node, NodeKind};
-pub use io::{block::PartitionInfo, Compression, DiscMeta, Format};
-pub use streams::ReadStream;
+pub use io::{block::PartitionInfo, Compression, DiscMeta, Format, KeyBytes};
 
 mod disc;
-mod fst;
 mod io;
-mod streams;
 mod util;
 
 /// Error types for nod.
@@ -207,6 +204,14 @@ impl Disc {
     pub fn open_partition_kind(&self, kind: PartitionKind) -> Result<Box<dyn PartitionBase>> {
         self.reader.open_partition_kind(kind, &self.options)
     }
+}
+
+impl BufRead for Disc {
+    #[inline]
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> { self.reader.fill_buf() }
+
+    #[inline]
+    fn consume(&mut self, amt: usize) { self.reader.consume(amt) }
 }
 
 impl Read for Disc {

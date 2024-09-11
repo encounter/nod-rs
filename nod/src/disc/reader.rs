@@ -1,22 +1,21 @@
 use std::{
-    cmp::min,
     io,
-    io::{Read, Seek, SeekFrom},
+    io::{BufRead, Read, Seek, SeekFrom},
 };
 
 use zerocopy::FromZeroes;
 
+use super::{
+    gcn::PartitionGC,
+    hashes::{rebuild_hashes, HashTable},
+    wii::{PartitionWii, WiiPartEntry, WiiPartGroup, WiiPartitionHeader, WII_PART_GROUP_OFF},
+    DiscHeader, PartitionBase, PartitionHeader, PartitionKind, DL_DVD_SIZE, MINI_DVD_SIZE,
+    SL_DVD_SIZE,
+};
 use crate::{
-    disc::{
-        gcn::PartitionGC,
-        hashes::{rebuild_hashes, HashTable},
-        wii::{PartitionWii, WiiPartEntry, WiiPartGroup, WiiPartitionHeader, WII_PART_GROUP_OFF},
-        DL_DVD_SIZE, MINI_DVD_SIZE, SL_DVD_SIZE,
-    },
     io::block::{Block, BlockIO, PartitionInfo},
     util::read::{read_box, read_from, read_vec},
-    DiscHeader, DiscMeta, Error, OpenOptions, PartitionBase, PartitionHeader, PartitionKind,
-    Result, ResultContext, SECTOR_SIZE,
+    DiscMeta, Error, OpenOptions, Result, ResultContext, SECTOR_SIZE,
 };
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -150,8 +149,8 @@ impl DiscReader {
     }
 }
 
-impl Read for DiscReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+impl BufRead for DiscReader {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
         let block_idx = (self.pos / self.block_buf.len() as u64) as u32;
         let abs_sector = (self.pos / SECTOR_SIZE as u64) as u32;
 
@@ -199,9 +198,20 @@ impl Read for DiscReader {
 
         // Read from sector buffer
         let offset = (self.pos % SECTOR_SIZE as u64) as usize;
-        let len = min(buf.len(), SECTOR_SIZE - offset);
-        buf[..len].copy_from_slice(&self.sector_buf[offset..offset + len]);
-        self.pos += len as u64;
+        Ok(&self.sector_buf[offset..])
+    }
+
+    #[inline]
+    fn consume(&mut self, amt: usize) { self.pos += amt as u64; }
+}
+
+impl Read for DiscReader {
+    #[inline]
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        let buf = self.fill_buf()?;
+        let len = buf.len().min(out.len());
+        out[..len].copy_from_slice(&buf[..len]);
+        self.consume(len);
         Ok(len)
     }
 }
