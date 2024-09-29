@@ -43,6 +43,9 @@ xxhash-rust = { version = "0.8", features = ["xxh64"] }
 zerocopy = { version = "0.7", features = ["alloc", "derive"] }
 zstd = "0.13"
 
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = "0.1"
+
 [build-dependencies]
 hex = { version = "0.4", features = ["serde"] }
 quick-xml = { version = "0.36", features = ["serialize"] }
