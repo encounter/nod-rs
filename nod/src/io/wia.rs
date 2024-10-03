@@ -19,7 +19,6 @@ use crate::{
     },
     static_assert,
     util::{
-        compress::{lzma2_props_decode, lzma_props_decode, new_lzma2_decoder, new_lzma_decoder},
         lfg::LaggedFibonacci,
         read::{read_box_slice, read_from, read_u16_be, read_vec},
         take_seek::TakeSeekExt,
@@ -459,15 +458,15 @@ pub enum Decompressor {
 
 impl Decompressor {
     pub fn new(disc: &WIADisc) -> Result<Self> {
-        let data = &disc.compr_data[..disc.compr_data_len as usize];
+        let _data = &disc.compr_data[..disc.compr_data_len as usize];
         match disc.compression() {
             WIACompression::None => Ok(Self::None),
             #[cfg(feature = "compress-bzip2")]
             WIACompression::Bzip2 => Ok(Self::Bzip2),
             #[cfg(feature = "compress-lzma")]
-            WIACompression::Lzma => Ok(Self::Lzma(Box::from(data))),
+            WIACompression::Lzma => Ok(Self::Lzma(Box::from(_data))),
             #[cfg(feature = "compress-lzma")]
-            WIACompression::Lzma2 => Ok(Self::Lzma2(Box::from(data))),
+            WIACompression::Lzma2 => Ok(Self::Lzma2(Box::from(_data))),
             #[cfg(feature = "compress-zstd")]
             WIACompression::Zstandard => Ok(Self::Zstandard),
             comp => Err(Error::DiscFormat(format!("Unsupported WIA/RVZ compression: {:?}", comp))),
@@ -482,11 +481,13 @@ impl Decompressor {
             Decompressor::Bzip2 => Box::new(bzip2::read::BzDecoder::new(reader)),
             #[cfg(feature = "compress-lzma")]
             Decompressor::Lzma(data) => {
+                use crate::util::compress::{lzma_props_decode, new_lzma_decoder};
                 let options = lzma_props_decode(data)?;
                 Box::new(new_lzma_decoder(reader, &options)?)
             }
             #[cfg(feature = "compress-lzma")]
             Decompressor::Lzma2(data) => {
+                use crate::util::compress::{lzma2_props_decode, new_lzma2_decoder};
                 let options = lzma2_props_decode(data)?;
                 Box::new(new_lzma2_decoder(reader, &options)?)
             }

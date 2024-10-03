@@ -1,13 +1,14 @@
-use std::{io, io::Read};
-
 /// Decodes the LZMA Properties byte (lc/lp/pb).
 /// See `lzma_lzma_lclppb_decode` in `liblzma/lzma/lzma_decoder.c`.
 #[cfg(feature = "compress-lzma")]
-pub fn lzma_lclppb_decode(options: &mut liblzma::stream::LzmaOptions, byte: u8) -> io::Result<()> {
+pub fn lzma_lclppb_decode(
+    options: &mut liblzma::stream::LzmaOptions,
+    byte: u8,
+) -> std::io::Result<()> {
     let mut d = byte as u32;
     if d >= (9 * 5 * 5) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
             format!("Invalid LZMA props byte: {}", d),
         ));
     }
@@ -21,11 +22,11 @@ pub fn lzma_lclppb_decode(options: &mut liblzma::stream::LzmaOptions, byte: u8) 
 /// Decodes LZMA properties.
 /// See `lzma_lzma_props_decode` in `liblzma/lzma/lzma_decoder.c`.
 #[cfg(feature = "compress-lzma")]
-pub fn lzma_props_decode(props: &[u8]) -> io::Result<liblzma::stream::LzmaOptions> {
+pub fn lzma_props_decode(props: &[u8]) -> std::io::Result<liblzma::stream::LzmaOptions> {
     use crate::array_ref;
     if props.len() != 5 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
             format!("Invalid LZMA props length: {}", props.len()),
         ));
     }
@@ -38,11 +39,11 @@ pub fn lzma_props_decode(props: &[u8]) -> io::Result<liblzma::stream::LzmaOption
 /// Decodes LZMA2 properties.
 /// See `lzma_lzma2_props_decode` in `liblzma/lzma/lzma2_decoder.c`.
 #[cfg(feature = "compress-lzma")]
-pub fn lzma2_props_decode(props: &[u8]) -> io::Result<liblzma::stream::LzmaOptions> {
+pub fn lzma2_props_decode(props: &[u8]) -> std::io::Result<liblzma::stream::LzmaOptions> {
     use std::cmp::Ordering;
     if props.len() != 1 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
             format!("Invalid LZMA2 props length: {}", props.len()),
         ));
     }
@@ -50,8 +51,8 @@ pub fn lzma2_props_decode(props: &[u8]) -> io::Result<liblzma::stream::LzmaOptio
     let mut options = liblzma::stream::LzmaOptions::new();
     options.dict_size(match d.cmp(&40) {
         Ordering::Greater => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
                 format!("Invalid LZMA2 props byte: {}", d),
             ));
         }
@@ -66,13 +67,14 @@ pub fn lzma2_props_decode(props: &[u8]) -> io::Result<liblzma::stream::LzmaOptio
 pub fn new_lzma_decoder<R>(
     reader: R,
     options: &liblzma::stream::LzmaOptions,
-) -> io::Result<liblzma::read::XzDecoder<R>>
+) -> std::io::Result<liblzma::read::XzDecoder<R>>
 where
-    R: Read,
+    R: std::io::Read,
 {
     let mut filters = liblzma::stream::Filters::new();
     filters.lzma1(options);
-    let stream = liblzma::stream::Stream::new_raw_decoder(&filters).map_err(io::Error::from)?;
+    let stream =
+        liblzma::stream::Stream::new_raw_decoder(&filters).map_err(std::io::Error::from)?;
     Ok(liblzma::read::XzDecoder::new_stream(reader, stream))
 }
 
@@ -81,12 +83,13 @@ where
 pub fn new_lzma2_decoder<R>(
     reader: R,
     options: &liblzma::stream::LzmaOptions,
-) -> io::Result<liblzma::read::XzDecoder<R>>
+) -> std::io::Result<liblzma::read::XzDecoder<R>>
 where
-    R: Read,
+    R: std::io::Read,
 {
     let mut filters = liblzma::stream::Filters::new();
     filters.lzma2(options);
-    let stream = liblzma::stream::Stream::new_raw_decoder(&filters).map_err(io::Error::from)?;
+    let stream =
+        liblzma::stream::Stream::new_raw_decoder(&filters).map_err(std::io::Error::from)?;
     Ok(liblzma::read::XzDecoder::new_stream(reader, stream))
 }
