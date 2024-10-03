@@ -23,7 +23,7 @@ pub(crate) mod streams;
 pub(crate) mod wii;
 
 pub use fst::{Fst, Node, NodeKind};
-pub use streams::FileStream;
+pub use streams::{FileStream, OwnedFileStream, WindowedStream};
 pub use wii::{SignedHeader, Ticket, TicketLimit, TmdHeader};
 
 /// Size in bytes of a disc sector.
@@ -308,6 +308,35 @@ pub trait PartitionBase: DynClone + BufRead + Seek + Send + Sync {
     /// }
     /// ```
     fn open_file(&mut self, node: &Node) -> io::Result<FileStream>;
+
+    /// Consumes the partition instance and returns a windowed stream.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::io::Read;
+    ///
+    /// use nod::{Disc, PartitionKind, OwnedFileStream};
+    ///
+    /// fn main() -> nod::Result<()> {
+    ///     let disc = Disc::new("path/to/file.iso")?;
+    ///     let mut partition = disc.open_partition_kind(PartitionKind::Data)?;
+    ///     let meta = partition.meta()?;
+    ///     let fst = meta.fst()?;
+    ///     if let Some((_, node)) = fst.find("/disc.tgc") {
+    ///         let file: OwnedFileStream = partition
+    ///             .clone() // Clone the Box<dyn PartitionBase>
+    ///             .into_open_file(node) // Get an OwnedFileStream
+    ///             .expect("Failed to open file stream");
+    ///         // Open the inner disc image using the owned stream
+    ///         let inner_disc = Disc::new_stream(Box::new(file))
+    ///             .expect("Failed to open inner disc");
+    ///         // ...
+    ///     }
+    ///     Ok(())
+    /// }
+    /// ```
+    fn into_open_file(self: Box<Self>, node: &Node) -> io::Result<OwnedFileStream>;
 }
 
 dyn_clone::clone_trait_object!(PartitionBase);

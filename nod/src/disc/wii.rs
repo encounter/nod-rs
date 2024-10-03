@@ -14,6 +14,7 @@ use super::{
 };
 use crate::{
     array_ref,
+    disc::streams::OwnedFileStream,
     io::{
         aes_decrypt,
         block::{Block, BlockIO, PartitionInfo},
@@ -496,5 +497,15 @@ impl PartitionBase for PartitionWii {
             ));
         }
         FileStream::new(self, node.offset(true), node.length())
+    }
+
+    fn into_open_file(self: Box<Self>, node: &Node) -> io::Result<OwnedFileStream> {
+        if !node.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Node is not a file".to_string(),
+            ));
+        }
+        OwnedFileStream::new(self, node.offset(true), node.length())
     }
 }

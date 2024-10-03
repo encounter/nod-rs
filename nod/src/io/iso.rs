@@ -1,28 +1,28 @@
 use std::{
     io,
     io::{Read, Seek, SeekFrom},
-    path::Path,
 };
 
 use crate::{
     disc::SECTOR_SIZE,
     io::{
-        block::{Block, BlockIO, PartitionInfo},
-        split::SplitFileReader,
+        block::{Block, BlockIO, DiscStream, PartitionInfo},
         Format,
     },
-    DiscMeta, Result,
+    DiscMeta, Result, ResultContext,
 };
 
 #[derive(Clone)]
 pub struct DiscIOISO {
-    inner: SplitFileReader,
+    inner: Box<dyn DiscStream>,
+    stream_len: u64,
 }
 
 impl DiscIOISO {
-    pub fn new(filename: &Path) -> Result<Box<Self>> {
-        let inner = SplitFileReader::new(filename)?;
-        Ok(Box::new(Self { inner }))
+    pub fn new(mut inner: Box<dyn DiscStream>) -> Result<Box<Self>> {
+        let stream_len = inner.seek(SeekFrom::End(0)).context("Determining stream length")?;
+        inner.seek(SeekFrom::Start(0)).context("Seeking to start")?;
+        Ok(Box::new(Self { inner, stream_len }))
     }
 }
 
@@ -34,16 +34,15 @@ impl BlockIO for DiscIOISO {
         _partition: Option<&PartitionInfo>,
     ) -> io::Result<Block> {
         let offset = block as u64 * SECTOR_SIZE as u64;
-        let total_size = self.inner.len();
-        if offset >= total_size {
+        if offset >= self.stream_len {
             // End of file
             return Ok(Block::Zero);
         }
 
         self.inner.seek(SeekFrom::Start(offset))?;
-        if offset + SECTOR_SIZE as u64 > total_size {
+        if offset + SECTOR_SIZE as u64 > self.stream_len {
             // If the last block is not a full sector, fill the rest with zeroes
-            let read = (total_size - offset) as usize;
+            let read = (self.stream_len - offset) as usize;
             self.inner.read_exact(&mut out[..read])?;
             out[read..].fill(0);
         } else {
@@ -58,7 +57,7 @@ impl BlockIO for DiscIOISO {
         DiscMeta {
             format: Format::Iso,
             lossless: true,
-            disc_size: Some(self.inner.len()),
+            disc_size: Some(self.stream_len),
             ..Default::default()
         }
     }

@@ -2,7 +2,6 @@ use std::{
     io,
     io::{Read, Seek, SeekFrom},
     mem::size_of,
-    path::Path,
 };
 
 use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
@@ -14,9 +13,8 @@ use crate::{
         SECTOR_SIZE,
     },
     io::{
-        block::{Block, BlockIO, PartitionInfo},
+        block::{Block, BlockIO, DiscStream, PartitionInfo},
         nkit::NKitHeader,
-        split::SplitFileReader,
         Compression, Format, HashBytes, KeyBytes, MagicBytes,
     },
     static_assert,
@@ -502,7 +500,7 @@ impl Decompressor {
 }
 
 pub struct DiscIOWIA {
-    inner: SplitFileReader,
+    inner: Box<dyn DiscStream>,
     header: WIAFileHeader,
     disc: WIADisc,
     partitions: Box<[WIAPartition]>,
@@ -549,17 +547,16 @@ fn verify_hash(buf: &[u8], expected: &HashBytes) -> Result<()> {
 }
 
 impl DiscIOWIA {
-    pub fn new(filename: &Path) -> Result<Box<Self>> {
-        let mut inner = SplitFileReader::new(filename)?;
-
+    pub fn new(mut inner: Box<dyn DiscStream>) -> Result<Box<Self>> {
         // Load & verify file header
-        let header: WIAFileHeader = read_from(&mut inner).context("Reading WIA/RVZ file header")?;
+        let header: WIAFileHeader =
+            read_from(inner.as_mut()).context("Reading WIA/RVZ file header")?;
         header.validate()?;
         let is_rvz = header.is_rvz();
         // log::debug!("Header: {:?}", header);
 
         // Load & verify disc header
-        let mut disc_buf: Vec<u8> = read_vec(&mut inner, header.disc_size.get() as usize)
+        let mut disc_buf: Vec<u8> = read_vec(inner.as_mut(), header.disc_size.get() as usize)
             .context("Reading WIA/RVZ disc header")?;
         verify_hash(&disc_buf, &header.disc_hash)?;
         disc_buf.resize(size_of::<WIADisc>(), 0);
@@ -576,14 +573,14 @@ impl DiscIOWIA {
         // log::debug!("Disc: {:?}", disc);
 
         // Read NKit header if present (after disc header)
-        let nkit_header = NKitHeader::try_read_from(&mut inner, disc.chunk_size.get(), false);
+        let nkit_header = NKitHeader::try_read_from(inner.as_mut(), disc.chunk_size.get(), false);
 
         // Load & verify partition headers
         inner
             .seek(SeekFrom::Start(disc.partition_offset.get()))
             .context("Seeking to WIA/RVZ partition headers")?;
         let partitions: Box<[WIAPartition]> =
-            read_box_slice(&mut inner, disc.num_partitions.get() as usize)
+            read_box_slice(inner.as_mut(), disc.num_partitions.get() as usize)
                 .context("Reading WIA/RVZ partition headers")?;
         verify_hash(partitions.as_ref().as_bytes(), &disc.partition_hash)?;
         // log::debug!("Partitions: {:?}", partitions);
@@ -597,7 +594,7 @@ impl DiscIOWIA {
                 .seek(SeekFrom::Start(disc.raw_data_offset.get()))
                 .context("Seeking to WIA/RVZ raw data headers")?;
             let mut reader = decompressor
-                .wrap((&mut inner).take(disc.raw_data_size.get() as u64))
+                .wrap(inner.as_mut().take(disc.raw_data_size.get() as u64))
                 .context("Creating WIA/RVZ decompressor")?;
             read_box_slice(&mut reader, disc.num_raw_data.get() as usize)
                 .context("Reading WIA/RVZ raw data headers")?
@@ -621,7 +618,7 @@ impl DiscIOWIA {
                 .seek(SeekFrom::Start(disc.group_offset.get()))
                 .context("Seeking to WIA/RVZ group headers")?;
             let mut reader = decompressor
-                .wrap((&mut inner).take(disc.group_size.get() as u64))
+                .wrap(inner.as_mut().take(disc.group_size.get() as u64))
                 .context("Creating WIA/RVZ decompressor")?;
             if is_rvz {
                 read_box_slice(&mut reader, disc.num_groups.get() as usize)

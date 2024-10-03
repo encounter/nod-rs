@@ -2,7 +2,6 @@ use std::{
     io,
     io::{Read, Seek, SeekFrom},
     mem::size_of,
-    path::Path,
 };
 
 use zerocopy::{big_endian::U32, AsBytes, FromBytes, FromZeroes};
@@ -10,8 +9,7 @@ use zerocopy::{big_endian::U32, AsBytes, FromBytes, FromZeroes};
 use crate::{
     disc::SECTOR_SIZE,
     io::{
-        block::{Block, BlockIO, PartitionInfo},
-        split::SplitFileReader,
+        block::{Block, BlockIO, DiscStream, PartitionInfo},
         Format, MagicBytes,
     },
     util::read::{read_box_slice, read_from},
@@ -56,17 +54,19 @@ struct TGCHeader {
 
 #[derive(Clone)]
 pub struct DiscIOTGC {
-    inner: SplitFileReader,
+    inner: Box<dyn DiscStream>,
+    stream_len: u64,
     header: TGCHeader,
     fst: Box<[u8]>,
 }
 
 impl DiscIOTGC {
-    pub fn new(filename: &Path) -> Result<Box<Self>> {
-        let mut inner = SplitFileReader::new(filename)?;
+    pub fn new(mut inner: Box<dyn DiscStream>) -> Result<Box<Self>> {
+        let stream_len = inner.seek(SeekFrom::End(0)).context("Determining stream length")?;
+        inner.seek(SeekFrom::Start(0)).context("Seeking to start")?;
 
         // Read header
-        let header: TGCHeader = read_from(&mut inner).context("Reading TGC header")?;
+        let header: TGCHeader = read_from(inner.as_mut()).context("Reading TGC header")?;
         if header.magic != TGC_MAGIC {
             return Err(Error::DiscFormat("Invalid TGC magic".to_string()));
         }
@@ -75,7 +75,7 @@ impl DiscIOTGC {
         inner
             .seek(SeekFrom::Start(header.fst_offset.get() as u64))
             .context("Seeking to TGC FST")?;
-        let mut fst = read_box_slice(&mut inner, header.fst_size.get() as usize)
+        let mut fst = read_box_slice(inner.as_mut(), header.fst_size.get() as usize)
             .context("Reading TGC FST")?;
         let root_node = Node::ref_from_prefix(&fst)
             .ok_or_else(|| Error::DiscFormat("Invalid TGC FST".to_string()))?;
@@ -89,7 +89,7 @@ impl DiscIOTGC {
             }
         }
 
-        Ok(Box::new(Self { inner, header, fst }))
+        Ok(Box::new(Self { inner, stream_len, header, fst }))
     }
 }
 
@@ -101,16 +101,15 @@ impl BlockIO for DiscIOTGC {
         _partition: Option<&PartitionInfo>,
     ) -> io::Result<Block> {
         let offset = self.header.header_offset.get() as u64 + block as u64 * SECTOR_SIZE as u64;
-        let total_size = self.inner.len();
-        if offset >= total_size {
+        if offset >= self.stream_len {
             // End of file
             return Ok(Block::Zero);
         }
 
         self.inner.seek(SeekFrom::Start(offset))?;
-        if offset + SECTOR_SIZE as u64 > total_size {
+        if offset + SECTOR_SIZE as u64 > self.stream_len {
             // If the last block is not a full sector, fill the rest with zeroes
-            let read = (total_size - offset) as usize;
+            let read = (self.stream_len - offset) as usize;
             self.inner.read_exact(&mut out[..read])?;
             out[read..].fill(0);
         } else {
@@ -149,7 +148,7 @@ impl BlockIO for DiscIOTGC {
         DiscMeta {
             format: Format::Tgc,
             lossless: true,
-            disc_size: Some(self.inner.len() - self.header.header_offset.get() as u64),
+            disc_size: Some(self.stream_len - self.header.header_offset.get() as u64),
             ..Default::default()
         }
     }

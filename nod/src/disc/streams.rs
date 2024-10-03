@@ -7,30 +7,39 @@ use std::{
 
 use super::PartitionBase;
 
-/// A file read stream for a [`PartitionBase`].
-pub struct FileStream<'a> {
-    base: &'a mut dyn PartitionBase,
+/// A file read stream borrowing a [`PartitionBase`].
+pub type FileStream<'a> = WindowedStream<&'a mut dyn PartitionBase>;
+
+/// A file read stream owning a [`PartitionBase`].
+pub type OwnedFileStream = WindowedStream<Box<dyn PartitionBase>>;
+
+/// A read stream with a fixed window.
+#[derive(Clone)]
+pub struct WindowedStream<T>
+where T: BufRead + Seek
+{
+    base: T,
     pos: u64,
     begin: u64,
     end: u64,
 }
 
-impl FileStream<'_> {
-    /// Creates a new file stream with offset and size.
+impl<T> WindowedStream<T>
+where T: BufRead + Seek
+{
+    /// Creates a new windowed stream with offset and size.
     ///
     /// Seeks underlying stream immediately.
     #[inline]
-    pub(crate) fn new(
-        base: &mut dyn PartitionBase,
-        offset: u64,
-        size: u64,
-    ) -> io::Result<FileStream> {
+    pub fn new(mut base: T, offset: u64, size: u64) -> io::Result<Self> {
         base.seek(SeekFrom::Start(offset))?;
-        Ok(FileStream { base, pos: offset, begin: offset, end: offset + size })
+        Ok(Self { base, pos: offset, begin: offset, end: offset + size })
     }
 }
 
-impl<'a> Read for FileStream<'a> {
+impl<T> Read for WindowedStream<T>
+where T: BufRead + Seek
+{
     #[inline]
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         let buf = self.fill_buf()?;
@@ -41,7 +50,9 @@ impl<'a> Read for FileStream<'a> {
     }
 }
 
-impl<'a> BufRead for FileStream<'a> {
+impl<T> BufRead for WindowedStream<T>
+where T: BufRead + Seek
+{
     #[inline]
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         let limit = self.end.saturating_sub(self.pos);
@@ -60,7 +71,9 @@ impl<'a> BufRead for FileStream<'a> {
     }
 }
 
-impl<'a> Seek for FileStream<'a> {
+impl<T> Seek for WindowedStream<T>
+where T: BufRead + Seek
+{
     #[inline]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let mut pos = match pos {

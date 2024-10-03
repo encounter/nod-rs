@@ -2,7 +2,6 @@ use std::{
     io,
     io::{Read, Seek, SeekFrom},
     mem::size_of,
-    path::Path,
 };
 
 use zerocopy::{little_endian::*, AsBytes, FromBytes, FromZeroes};
@@ -10,9 +9,8 @@ use zerocopy::{little_endian::*, AsBytes, FromBytes, FromZeroes};
 use crate::{
     disc::SECTOR_SIZE,
     io::{
-        block::{Block, BlockIO, PartitionInfo},
+        block::{Block, BlockIO, DiscStream, PartitionInfo},
         nkit::NKitHeader,
-        split::SplitFileReader,
         Format, MagicBytes,
     },
     static_assert,
@@ -36,18 +34,16 @@ static_assert!(size_of::<CISOHeader>() == SECTOR_SIZE);
 
 #[derive(Clone)]
 pub struct DiscIOCISO {
-    inner: SplitFileReader,
+    inner: Box<dyn DiscStream>,
     header: CISOHeader,
     block_map: [u16; CISO_MAP_SIZE],
     nkit_header: Option<NKitHeader>,
 }
 
 impl DiscIOCISO {
-    pub fn new(filename: &Path) -> Result<Box<Self>> {
-        let mut inner = SplitFileReader::new(filename)?;
-
+    pub fn new(mut inner: Box<dyn DiscStream>) -> Result<Box<Self>> {
         // Read header
-        let header: CISOHeader = read_from(&mut inner).context("Reading CISO header")?;
+        let header: CISOHeader = read_from(inner.as_mut()).context("Reading CISO header")?;
         if header.magic != CISO_MAGIC {
             return Err(Error::DiscFormat("Invalid CISO magic".to_string()));
         }
@@ -64,18 +60,18 @@ impl DiscIOCISO {
             }
         }
         let file_size = SECTOR_SIZE as u64 + block as u64 * header.block_size.get() as u64;
-        if file_size > inner.len() {
+        let len = inner.seek(SeekFrom::End(0)).context("Determining stream length")?;
+        if file_size > len {
             return Err(Error::DiscFormat(format!(
                 "CISO file size mismatch: expected at least {} bytes, got {}",
-                file_size,
-                inner.len()
+                file_size, len
             )));
         }
 
         // Read NKit header if present (after CISO data)
-        let nkit_header = if inner.len() > file_size + 4 {
+        let nkit_header = if len > file_size + 4 {
             inner.seek(SeekFrom::Start(file_size)).context("Seeking to NKit header")?;
-            NKitHeader::try_read_from(&mut inner, header.block_size.get(), true)
+            NKitHeader::try_read_from(inner.as_mut(), header.block_size.get(), true)
         } else {
             None
         };

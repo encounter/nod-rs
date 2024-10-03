@@ -1,4 +1,9 @@
-use std::{cmp::min, fs, fs::File, io, path::Path};
+use std::{
+    cmp::min,
+    fs, io,
+    io::{Read, Seek},
+    path::Path,
+};
 
 use dyn_clone::DynClone;
 use zerocopy::transmute_ref;
@@ -10,10 +15,17 @@ use crate::{
         wii::{WiiPartitionHeader, HASHES_SIZE, SECTOR_DATA_SIZE},
         SECTOR_SIZE,
     },
-    io::{aes_decrypt, aes_encrypt, KeyBytes, MagicBytes},
+    io::{aes_decrypt, aes_encrypt, split::SplitFileReader, KeyBytes, MagicBytes},
     util::{lfg::LaggedFibonacci, read::read_from},
     DiscHeader, DiscMeta, Error, PartitionHeader, PartitionKind, Result, ResultContext,
 };
+
+/// Required trait bounds for reading disc images.
+pub trait DiscStream: Read + Seek + DynClone + Send + Sync {}
+
+impl<T> DiscStream for T where T: Read + Seek + DynClone + Send + Sync + ?Sized {}
+
+dyn_clone::clone_trait_object!(DiscStream);
 
 /// Block I/O trait for reading disc images.
 pub trait BlockIO: DynClone + Send + Sync {
@@ -78,7 +90,27 @@ pub trait BlockIO: DynClone + Send + Sync {
 
 dyn_clone::clone_trait_object!(BlockIO);
 
-/// Creates a new [`BlockIO`] instance.
+/// Creates a new [`BlockIO`] instance from a stream.
+pub fn new(mut stream: Box<dyn DiscStream>) -> Result<Box<dyn BlockIO>> {
+    let magic: MagicBytes = read_from(stream.as_mut()).context("Reading magic bytes")?;
+    stream.seek(io::SeekFrom::Start(0)).context("Seeking to start")?;
+    let io: Box<dyn BlockIO> = match magic {
+        crate::io::ciso::CISO_MAGIC => crate::io::ciso::DiscIOCISO::new(stream)?,
+        #[cfg(feature = "compress-zlib")]
+        crate::io::gcz::GCZ_MAGIC => crate::io::gcz::DiscIOGCZ::new(stream)?,
+        crate::io::nfs::NFS_MAGIC => todo!(),
+        crate::io::wbfs::WBFS_MAGIC => crate::io::wbfs::DiscIOWBFS::new(stream)?,
+        crate::io::wia::WIA_MAGIC | crate::io::wia::RVZ_MAGIC => {
+            crate::io::wia::DiscIOWIA::new(stream)?
+        }
+        crate::io::tgc::TGC_MAGIC => crate::io::tgc::DiscIOTGC::new(stream)?,
+        _ => crate::io::iso::DiscIOISO::new(stream)?,
+    };
+    check_block_size(io.as_ref())?;
+    Ok(io)
+}
+
+/// Creates a new [`BlockIO`] instance from a filesystem path.
 pub fn open(filename: &Path) -> Result<Box<dyn BlockIO>> {
     let path_result = fs::canonicalize(filename);
     if let Err(err) = path_result {
@@ -92,16 +124,16 @@ pub fn open(filename: &Path) -> Result<Box<dyn BlockIO>> {
     if !meta.unwrap().is_file() {
         return Err(Error::DiscFormat(format!("Input is not a file: {}", filename.display())));
     }
-    let magic: MagicBytes = {
-        let mut file =
-            File::open(path).with_context(|| format!("Opening file {}", filename.display()))?;
-        read_from(&mut file)
-            .with_context(|| format!("Reading magic bytes from {}", filename.display()))?
-    };
+    let mut stream = Box::new(SplitFileReader::new(filename)?);
+    let magic: MagicBytes = read_from(stream.as_mut())
+        .with_context(|| format!("Reading magic bytes from {}", filename.display()))?;
+    stream
+        .seek(io::SeekFrom::Start(0))
+        .with_context(|| format!("Seeking to start of {}", filename.display()))?;
     let io: Box<dyn BlockIO> = match magic {
-        crate::io::ciso::CISO_MAGIC => crate::io::ciso::DiscIOCISO::new(path)?,
+        crate::io::ciso::CISO_MAGIC => crate::io::ciso::DiscIOCISO::new(stream)?,
         #[cfg(feature = "compress-zlib")]
-        crate::io::gcz::GCZ_MAGIC => crate::io::gcz::DiscIOGCZ::new(path)?,
+        crate::io::gcz::GCZ_MAGIC => crate::io::gcz::DiscIOGCZ::new(stream)?,
         crate::io::nfs::NFS_MAGIC => match path.parent() {
             Some(parent) if parent.is_dir() => {
                 crate::io::nfs::DiscIONFS::new(path.parent().unwrap())?
@@ -110,13 +142,18 @@ pub fn open(filename: &Path) -> Result<Box<dyn BlockIO>> {
                 return Err(Error::DiscFormat("Failed to locate NFS parent directory".to_string()));
             }
         },
-        crate::io::wbfs::WBFS_MAGIC => crate::io::wbfs::DiscIOWBFS::new(path)?,
+        crate::io::wbfs::WBFS_MAGIC => crate::io::wbfs::DiscIOWBFS::new(stream)?,
         crate::io::wia::WIA_MAGIC | crate::io::wia::RVZ_MAGIC => {
-            crate::io::wia::DiscIOWIA::new(path)?
+            crate::io::wia::DiscIOWIA::new(stream)?
         }
-        crate::io::tgc::TGC_MAGIC => crate::io::tgc::DiscIOTGC::new(path)?,
-        _ => crate::io::iso::DiscIOISO::new(path)?,
+        crate::io::tgc::TGC_MAGIC => crate::io::tgc::DiscIOTGC::new(stream)?,
+        _ => crate::io::iso::DiscIOISO::new(stream)?,
     };
+    check_block_size(io.as_ref())?;
+    Ok(io)
+}
+
+fn check_block_size(io: &dyn BlockIO) -> Result<()> {
     if io.block_size_internal() < SECTOR_SIZE as u32
         && SECTOR_SIZE as u32 % io.block_size_internal() != 0
     {
@@ -133,7 +170,7 @@ pub fn open(filename: &Path) -> Result<Box<dyn BlockIO>> {
             SECTOR_SIZE
         )));
     }
-    Ok(io)
+    Ok(())
 }
 
 /// Wii partition information.

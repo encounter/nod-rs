@@ -11,6 +11,7 @@ use super::{
     PartitionMeta, BI2_SIZE, BOOT_SIZE, SECTOR_SIZE,
 };
 use crate::{
+    disc::streams::OwnedFileStream,
     io::block::{Block, BlockIO},
     util::read::{read_box, read_box_slice, read_vec},
     Result, ResultContext,
@@ -131,6 +132,16 @@ impl PartitionBase for PartitionGC {
             ));
         }
         FileStream::new(self, node.offset(false), node.length())
+    }
+
+    fn into_open_file(self: Box<Self>, node: &Node) -> io::Result<OwnedFileStream> {
+        if !node.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Node is not a file".to_string(),
+            ));
+        }
+        OwnedFileStream::new(self, node.offset(false), node.length())
     }
 }
 

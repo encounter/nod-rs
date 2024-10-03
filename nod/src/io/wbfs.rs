@@ -2,16 +2,14 @@ use std::{
     io,
     io::{Read, Seek, SeekFrom},
     mem::size_of,
-    path::Path,
 };
 
 use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
 
 use crate::{
     io::{
-        block::{Block, BlockIO, PartitionInfo},
+        block::{Block, BlockIO, DiscStream, PartitionInfo},
         nkit::NKitHeader,
-        split::SplitFileReader,
         DiscMeta, Format, MagicBytes,
     },
     util::read::{read_box_slice, read_from},
@@ -35,18 +33,6 @@ impl WBFSHeader {
 
     fn block_size(&self) -> u32 { 1 << self.block_size_shift }
 
-    // fn align_lba(&self, x: u32) -> u32 { (x + self.sector_size() - 1) & !(self.sector_size() - 1) }
-    //
-    // fn num_wii_sectors(&self) -> u32 {
-    //     (self.num_sectors.get() / SECTOR_SIZE as u32) * self.sector_size()
-    // }
-    //
-    // fn max_wii_sectors(&self) -> u32 { NUM_WII_SECTORS }
-    //
-    // fn num_wbfs_sectors(&self) -> u32 {
-    //     self.num_wii_sectors() >> (self.wbfs_sector_size_shift - 15)
-    // }
-
     fn max_blocks(&self) -> u32 { NUM_WII_SECTORS >> (self.block_size_shift - 15) }
 }
 
@@ -55,7 +41,7 @@ const NUM_WII_SECTORS: u32 = 143432 * 2; // Double layer discs
 
 #[derive(Clone)]
 pub struct DiscIOWBFS {
-    inner: SplitFileReader,
+    inner: Box<dyn DiscStream>,
     /// WBFS header
     header: WBFSHeader,
     /// Map of Wii LBAs to WBFS LBAs
@@ -65,14 +51,12 @@ pub struct DiscIOWBFS {
 }
 
 impl DiscIOWBFS {
-    pub fn new(filename: &Path) -> Result<Box<Self>> {
-        let mut inner = SplitFileReader::new(filename)?;
-
-        let header: WBFSHeader = read_from(&mut inner).context("Reading WBFS header")?;
+    pub fn new(mut inner: Box<dyn DiscStream>) -> Result<Box<Self>> {
+        let header: WBFSHeader = read_from(inner.as_mut()).context("Reading WBFS header")?;
         if header.magic != WBFS_MAGIC {
             return Err(Error::DiscFormat("Invalid WBFS magic".to_string()));
         }
-        let file_len = inner.len();
+        let file_len = inner.seek(SeekFrom::End(0)).context("Determining stream length")?;
         let expected_file_len = header.num_sectors.get() as u64 * header.sector_size() as u64;
         if file_len != expected_file_len {
             return Err(Error::DiscFormat(format!(
@@ -81,8 +65,11 @@ impl DiscIOWBFS {
             )));
         }
 
+        inner
+            .seek(SeekFrom::Start(size_of::<WBFSHeader>() as u64))
+            .context("Seeking to WBFS disc table")?;
         let disc_table: Box<[u8]> =
-            read_box_slice(&mut inner, header.sector_size() as usize - size_of::<WBFSHeader>())
+            read_box_slice(inner.as_mut(), header.sector_size() as usize - size_of::<WBFSHeader>())
                 .context("Reading WBFS disc table")?;
         if disc_table[0] != 1 {
             return Err(Error::DiscFormat("WBFS doesn't contain a disc".to_string()));
@@ -95,12 +82,12 @@ impl DiscIOWBFS {
         inner
             .seek(SeekFrom::Start(header.sector_size() as u64 + DISC_HEADER_SIZE as u64))
             .context("Seeking to WBFS LBA table")?; // Skip header
-        let block_map: Box<[U16]> = read_box_slice(&mut inner, header.max_blocks() as usize)
+        let block_map: Box<[U16]> = read_box_slice(inner.as_mut(), header.max_blocks() as usize)
             .context("Reading WBFS LBA table")?;
 
         // Read NKit header if present (always at 0x10000)
         inner.seek(SeekFrom::Start(0x10000)).context("Seeking to NKit header")?;
-        let nkit_header = NKitHeader::try_read_from(&mut inner, header.block_size(), true);
+        let nkit_header = NKitHeader::try_read_from(inner.as_mut(), header.block_size(), true);
 
         Ok(Box::new(Self { inner, header, block_map, nkit_header }))
     }

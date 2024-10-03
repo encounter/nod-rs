@@ -61,7 +61,7 @@ impl Node {
     /// For directories, this is the parent node index in the FST.
     #[inline]
     pub fn offset(&self, is_wii: bool) -> u64 {
-        if is_wii && self.kind == 0 {
+        if is_wii && self.is_file() {
             self.offset.get() as u64 * 4
         } else {
             self.offset.get() as u64
@@ -108,7 +108,7 @@ impl<'a> Fst<'a> {
 
     /// Get the name of a node.
     #[allow(clippy::missing_inline_in_public_items)]
-    pub fn get_name(&self, node: &Node) -> Result<Cow<str>, String> {
+    pub fn get_name(&self, node: &Node) -> Result<Cow<'a, str>, String> {
         let name_buf = self.string_table.get(node.name_offset() as usize..).ok_or_else(|| {
             format!(
                 "FST: name offset {} out of bounds (string table size: {})",
@@ -128,7 +128,7 @@ impl<'a> Fst<'a> {
 
     /// Finds a particular file or directory by path.
     #[allow(clippy::missing_inline_in_public_items)]
-    pub fn find(&self, path: &str) -> Option<(usize, &Node)> {
+    pub fn find(&self, path: &str) -> Option<(usize, &'a Node)> {
         let mut split = path.trim_matches('/').split('/');
         let mut current = split.next()?;
         let mut idx = 1;

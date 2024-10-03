@@ -2,7 +2,6 @@ use std::{
     io,
     io::{Read, Seek, SeekFrom},
     mem::size_of,
-    path::Path,
 };
 
 use adler::adler32_slice;
@@ -12,8 +11,7 @@ use zstd::zstd_safe::WriteBuf;
 
 use crate::{
     io::{
-        block::{Block, BlockIO},
-        split::SplitFileReader,
+        block::{Block, BlockIO, DiscStream},
         MagicBytes,
     },
     static_assert,
@@ -38,7 +36,7 @@ struct GCZHeader {
 static_assert!(size_of::<GCZHeader>() == 32);
 
 pub struct DiscIOGCZ {
-    inner: SplitFileReader,
+    inner: Box<dyn DiscStream>,
     header: GCZHeader,
     block_map: Box<[U64]>,
     block_hashes: Box<[U32]>,
@@ -60,21 +58,19 @@ impl Clone for DiscIOGCZ {
 }
 
 impl DiscIOGCZ {
-    pub fn new(filename: &Path) -> Result<Box<Self>> {
-        let mut inner = SplitFileReader::new(filename)?;
-
+    pub fn new(mut inner: Box<dyn DiscStream>) -> Result<Box<Self>> {
         // Read header
-        let header: GCZHeader = read_from(&mut inner).context("Reading GCZ header")?;
+        let header: GCZHeader = read_from(inner.as_mut()).context("Reading GCZ header")?;
         if header.magic != GCZ_MAGIC {
             return Err(Error::DiscFormat("Invalid GCZ magic".to_string()));
         }
 
         // Read block map and hashes
         let block_count = header.block_count.get();
-        let block_map =
-            read_box_slice(&mut inner, block_count as usize).context("Reading GCZ block map")?;
-        let block_hashes =
-            read_box_slice(&mut inner, block_count as usize).context("Reading GCZ block hashes")?;
+        let block_map = read_box_slice(inner.as_mut(), block_count as usize)
+            .context("Reading GCZ block map")?;
+        let block_hashes = read_box_slice(inner.as_mut(), block_count as usize)
+            .context("Reading GCZ block hashes")?;
 
         // header + block_count * (u64 + u32)
         let data_offset = size_of::<GCZHeader>() as u64 + block_count as u64 * 12;

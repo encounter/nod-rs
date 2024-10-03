@@ -64,11 +64,14 @@ use std::{
 };
 
 pub use disc::{
-    ApploaderHeader, DiscHeader, DolHeader, FileStream, Fst, Node, NodeKind, PartitionBase,
-    PartitionHeader, PartitionKind, PartitionMeta, SignedHeader, Ticket, TicketLimit, TmdHeader,
-    BI2_SIZE, BOOT_SIZE, SECTOR_SIZE,
+    ApploaderHeader, DiscHeader, DolHeader, FileStream, Fst, Node, NodeKind, OwnedFileStream,
+    PartitionBase, PartitionHeader, PartitionKind, PartitionMeta, SignedHeader, Ticket,
+    TicketLimit, TmdHeader, WindowedStream, BI2_SIZE, BOOT_SIZE, SECTOR_SIZE,
 };
-pub use io::{block::PartitionInfo, Compression, DiscMeta, Format, KeyBytes};
+pub use io::{
+    block::{DiscStream, PartitionInfo},
+    Compression, DiscMeta, Format, KeyBytes,
+};
 
 mod disc;
 mod io;
@@ -166,6 +169,23 @@ impl Disc {
     #[inline]
     pub fn new_with_options<P: AsRef<Path>>(path: P, options: &OpenOptions) -> Result<Disc> {
         let io = io::block::open(path.as_ref())?;
+        let reader = disc::reader::DiscReader::new(io, options)?;
+        Ok(Disc { reader, options: options.clone() })
+    }
+
+    /// Opens a disc image from a read stream.
+    #[inline]
+    pub fn new_stream(stream: Box<dyn DiscStream>) -> Result<Disc> {
+        Disc::new_stream_with_options(stream, &OpenOptions::default())
+    }
+
+    /// Opens a disc image from a read stream with custom options.
+    #[inline]
+    pub fn new_stream_with_options(
+        stream: Box<dyn DiscStream>,
+        options: &OpenOptions,
+    ) -> Result<Disc> {
+        let io = io::block::new(stream)?;
         let reader = disc::reader::DiscReader::new(io, options)?;
         Ok(Disc { reader, options: options.clone() })
     }
