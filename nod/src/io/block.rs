@@ -13,11 +13,13 @@ use crate::{
     disc::{
         hashes::HashTable,
         wii::{WiiPartitionHeader, HASHES_SIZE, SECTOR_DATA_SIZE},
-        SECTOR_SIZE,
+        DiscHeader, PartitionHeader, PartitionKind, GCN_MAGIC, SECTOR_SIZE, WII_MAGIC,
     },
-    io::{aes_decrypt, aes_encrypt, split::SplitFileReader, KeyBytes, MagicBytes},
+    io::{
+        aes_decrypt, aes_encrypt, split::SplitFileReader, DiscMeta, Format, KeyBytes, MagicBytes,
+    },
     util::{lfg::LaggedFibonacci, read::read_from},
-    DiscHeader, DiscMeta, Error, PartitionHeader, PartitionKind, Result, ResultContext,
+    Error, Result, ResultContext,
 };
 
 /// Required trait bounds for reading disc images.
@@ -92,19 +94,26 @@ dyn_clone::clone_trait_object!(BlockIO);
 
 /// Creates a new [`BlockIO`] instance from a stream.
 pub fn new(mut stream: Box<dyn DiscStream>) -> Result<Box<dyn BlockIO>> {
-    let magic: MagicBytes = read_from(stream.as_mut()).context("Reading magic bytes")?;
-    stream.seek(io::SeekFrom::Start(0)).context("Seeking to start")?;
-    let io: Box<dyn BlockIO> = match magic {
-        crate::io::ciso::CISO_MAGIC => crate::io::ciso::DiscIOCISO::new(stream)?,
-        #[cfg(feature = "compress-zlib")]
-        crate::io::gcz::GCZ_MAGIC => crate::io::gcz::DiscIOGCZ::new(stream)?,
-        crate::io::nfs::NFS_MAGIC => todo!(),
-        crate::io::wbfs::WBFS_MAGIC => crate::io::wbfs::DiscIOWBFS::new(stream)?,
-        crate::io::wia::WIA_MAGIC | crate::io::wia::RVZ_MAGIC => {
-            crate::io::wia::DiscIOWIA::new(stream)?
+    let io: Box<dyn BlockIO> = match detect(stream.as_mut())? {
+        Some(Format::Iso) => crate::io::iso::DiscIOISO::new(stream)?,
+        Some(Format::Ciso) => crate::io::ciso::DiscIOCISO::new(stream)?,
+        Some(Format::Gcz) => {
+            #[cfg(feature = "compress-zlib")]
+            {
+                crate::io::gcz::DiscIOGCZ::new(stream)?
+            }
+            #[cfg(not(feature = "compress-zlib"))]
+            {
+                return Err(Error::DiscFormat("GCZ support is disabled".to_string()));
+            }
         }
-        crate::io::tgc::TGC_MAGIC => crate::io::tgc::DiscIOTGC::new(stream)?,
-        _ => crate::io::iso::DiscIOISO::new(stream)?,
+        Some(Format::Nfs) => {
+            return Err(Error::DiscFormat("NFS requires a filesystem path".to_string()))
+        }
+        Some(Format::Wbfs) => crate::io::wbfs::DiscIOWBFS::new(stream)?,
+        Some(Format::Wia | Format::Rvz) => crate::io::wia::DiscIOWIA::new(stream)?,
+        Some(Format::Tgc) => crate::io::tgc::DiscIOTGC::new(stream)?,
+        None => return Err(Error::DiscFormat("Unknown disc format".to_string())),
     };
     check_block_size(io.as_ref())?;
     Ok(io)
@@ -125,16 +134,20 @@ pub fn open(filename: &Path) -> Result<Box<dyn BlockIO>> {
         return Err(Error::DiscFormat(format!("Input is not a file: {}", filename.display())));
     }
     let mut stream = Box::new(SplitFileReader::new(filename)?);
-    let magic: MagicBytes = read_from(stream.as_mut())
-        .with_context(|| format!("Reading magic bytes from {}", filename.display()))?;
-    stream
-        .seek(io::SeekFrom::Start(0))
-        .with_context(|| format!("Seeking to start of {}", filename.display()))?;
-    let io: Box<dyn BlockIO> = match magic {
-        crate::io::ciso::CISO_MAGIC => crate::io::ciso::DiscIOCISO::new(stream)?,
-        #[cfg(feature = "compress-zlib")]
-        crate::io::gcz::GCZ_MAGIC => crate::io::gcz::DiscIOGCZ::new(stream)?,
-        crate::io::nfs::NFS_MAGIC => match path.parent() {
+    let io: Box<dyn BlockIO> = match detect(stream.as_mut())? {
+        Some(Format::Iso) => crate::io::iso::DiscIOISO::new(stream)?,
+        Some(Format::Ciso) => crate::io::ciso::DiscIOCISO::new(stream)?,
+        Some(Format::Gcz) => {
+            #[cfg(feature = "compress-zlib")]
+            {
+                crate::io::gcz::DiscIOGCZ::new(stream)?
+            }
+            #[cfg(not(feature = "compress-zlib"))]
+            {
+                return Err(Error::DiscFormat("GCZ support is disabled".to_string()));
+            }
+        }
+        Some(Format::Nfs) => match path.parent() {
             Some(parent) if parent.is_dir() => {
                 crate::io::nfs::DiscIONFS::new(path.parent().unwrap())?
             }
@@ -142,15 +155,43 @@ pub fn open(filename: &Path) -> Result<Box<dyn BlockIO>> {
                 return Err(Error::DiscFormat("Failed to locate NFS parent directory".to_string()));
             }
         },
-        crate::io::wbfs::WBFS_MAGIC => crate::io::wbfs::DiscIOWBFS::new(stream)?,
-        crate::io::wia::WIA_MAGIC | crate::io::wia::RVZ_MAGIC => {
-            crate::io::wia::DiscIOWIA::new(stream)?
-        }
-        crate::io::tgc::TGC_MAGIC => crate::io::tgc::DiscIOTGC::new(stream)?,
-        _ => crate::io::iso::DiscIOISO::new(stream)?,
+        Some(Format::Tgc) => crate::io::tgc::DiscIOTGC::new(stream)?,
+        Some(Format::Wbfs) => crate::io::wbfs::DiscIOWBFS::new(stream)?,
+        Some(Format::Wia | Format::Rvz) => crate::io::wia::DiscIOWIA::new(stream)?,
+        None => return Err(Error::DiscFormat("Unknown disc format".to_string())),
     };
     check_block_size(io.as_ref())?;
     Ok(io)
+}
+
+pub const CISO_MAGIC: MagicBytes = *b"CISO";
+pub const GCZ_MAGIC: MagicBytes = [0x01, 0xC0, 0x0B, 0xB1];
+pub const NFS_MAGIC: MagicBytes = *b"EGGS";
+pub const TGC_MAGIC: MagicBytes = [0xae, 0x0f, 0x38, 0xa2];
+pub const WBFS_MAGIC: MagicBytes = *b"WBFS";
+pub const WIA_MAGIC: MagicBytes = *b"WIA\x01";
+pub const RVZ_MAGIC: MagicBytes = *b"RVZ\x01";
+
+pub fn detect<R: Read + ?Sized>(stream: &mut R) -> Result<Option<Format>> {
+    let data: [u8; 0x20] = match read_from(stream) {
+        Ok(magic) => magic,
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e).context("Reading magic bytes"),
+    };
+    let out = match *array_ref!(data, 0, 4) {
+        CISO_MAGIC => Some(Format::Ciso),
+        GCZ_MAGIC => Some(Format::Gcz),
+        NFS_MAGIC => Some(Format::Nfs),
+        TGC_MAGIC => Some(Format::Tgc),
+        WBFS_MAGIC => Some(Format::Wbfs),
+        WIA_MAGIC => Some(Format::Wia),
+        RVZ_MAGIC => Some(Format::Rvz),
+        _ if *array_ref!(data, 0x18, 4) == WII_MAGIC || *array_ref!(data, 0x1C, 4) == GCN_MAGIC => {
+            Some(Format::Iso)
+        }
+        _ => None,
+    };
+    Ok(out)
 }
 
 fn check_block_size(io: &dyn BlockIO) -> Result<()> {

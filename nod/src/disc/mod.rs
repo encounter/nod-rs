@@ -13,7 +13,7 @@ use std::{
 use dyn_clone::DynClone;
 use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
 
-use crate::{static_assert, Result};
+use crate::{io::MagicBytes, static_assert, Result};
 
 pub(crate) mod fst;
 pub(crate) mod gcn;
@@ -28,6 +28,12 @@ pub use wii::{SignedHeader, Ticket, TicketLimit, TmdHeader};
 
 /// Size in bytes of a disc sector.
 pub const SECTOR_SIZE: usize = 0x8000;
+
+/// Magic bytes for Wii discs. Located at offset 0x18.
+pub const WII_MAGIC: MagicBytes = [0x5D, 0x1C, 0x9E, 0xA3];
+
+/// Magic bytes for GameCube discs. Located at offset 0x1C.
+pub const GCN_MAGIC: MagicBytes = [0xC2, 0x33, 0x9F, 0x3D];
 
 /// Shared GameCube & Wii disc header.
 ///
@@ -48,9 +54,9 @@ pub struct DiscHeader {
     /// Padding
     _pad1: [u8; 14],
     /// If this is a Wii disc, this will be 0x5D1C9EA3
-    pub wii_magic: U32,
+    pub wii_magic: MagicBytes,
     /// If this is a GameCube disc, this will be 0xC2339F3D
-    pub gcn_magic: U32,
+    pub gcn_magic: MagicBytes,
     /// Game title
     pub game_title: [u8; 64],
     /// If 1, disc omits partition hashes
@@ -79,11 +85,11 @@ impl DiscHeader {
 
     /// Whether this is a GameCube disc.
     #[inline]
-    pub fn is_gamecube(&self) -> bool { self.gcn_magic.get() == 0xC2339F3D }
+    pub fn is_gamecube(&self) -> bool { self.gcn_magic == GCN_MAGIC }
 
     /// Whether this is a Wii disc.
     #[inline]
-    pub fn is_wii(&self) -> bool { self.wii_magic.get() == 0x5D1C9EA3 }
+    pub fn is_wii(&self) -> bool { self.wii_magic == WII_MAGIC }
 }
 
 /// A header describing the contents of a disc partition.

@@ -9,14 +9,12 @@ use zerocopy::{big_endian::U32, AsBytes, FromBytes, FromZeroes};
 use crate::{
     disc::SECTOR_SIZE,
     io::{
-        block::{Block, BlockIO, DiscStream, PartitionInfo},
+        block::{Block, BlockIO, DiscStream, PartitionInfo, TGC_MAGIC},
         Format, MagicBytes,
     },
     util::read::{read_box_slice, read_from},
     DiscHeader, DiscMeta, Error, Node, PartitionHeader, Result, ResultContext,
 };
-
-pub const TGC_MAGIC: MagicBytes = [0xae, 0x0f, 0x38, 0xa2];
 
 /// TGC header (big endian)
 #[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]

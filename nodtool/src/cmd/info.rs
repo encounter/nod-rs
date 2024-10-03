@@ -92,11 +92,7 @@ fn info_file(path: &Path) -> nod::Result<()> {
     } else if header.is_gamecube() {
         // TODO
     } else {
-        println!(
-            "Invalid GC/Wii magic: {:#010X}/{:#010X}",
-            header.gcn_magic.get(),
-            header.wii_magic.get()
-        );
+        println!("Invalid GC/Wii magic: {:#x?}/{:#x?}", header.gcn_magic, header.wii_magic);
     }
     println!();
     Ok(())

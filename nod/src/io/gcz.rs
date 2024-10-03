@@ -11,15 +11,13 @@ use zstd::zstd_safe::WriteBuf;
 
 use crate::{
     io::{
-        block::{Block, BlockIO, DiscStream},
+        block::{Block, BlockIO, DiscStream, GCZ_MAGIC},
         MagicBytes,
     },
     static_assert,
     util::read::{read_box_slice, read_from},
     Compression, DiscMeta, Error, Format, PartitionInfo, Result, ResultContext,
 };
-
-pub const GCZ_MAGIC: MagicBytes = [0x01, 0xC0, 0x0B, 0xB1];
 
 /// GCZ header (little endian)
 #[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
@@ -60,6 +58,7 @@ impl Clone for DiscIOGCZ {
 impl DiscIOGCZ {
     pub fn new(mut inner: Box<dyn DiscStream>) -> Result<Box<Self>> {
         // Read header
+        inner.seek(SeekFrom::Start(0)).context("Seeking to start")?;
         let header: GCZHeader = read_from(inner.as_mut()).context("Reading GCZ header")?;
         if header.magic != GCZ_MAGIC {
             return Err(Error::DiscFormat("Invalid GCZ magic".to_string()));

@@ -9,7 +9,7 @@ use zerocopy::{little_endian::*, AsBytes, FromBytes, FromZeroes};
 use crate::{
     disc::SECTOR_SIZE,
     io::{
-        block::{Block, BlockIO, DiscStream, PartitionInfo},
+        block::{Block, BlockIO, DiscStream, PartitionInfo, CISO_MAGIC},
         nkit::NKitHeader,
         Format, MagicBytes,
     },
@@ -18,7 +18,6 @@ use crate::{
     DiscMeta, Error, Result, ResultContext,
 };
 
-pub const CISO_MAGIC: MagicBytes = *b"CISO";
 pub const CISO_MAP_SIZE: usize = SECTOR_SIZE - 8;
 
 /// CISO header (little endian)
@@ -43,6 +42,7 @@ pub struct DiscIOCISO {
 impl DiscIOCISO {
     pub fn new(mut inner: Box<dyn DiscStream>) -> Result<Box<Self>> {
         // Read header
+        inner.seek(SeekFrom::Start(0)).context("Seeking to start")?;
         let header: CISOHeader = read_from(inner.as_mut()).context("Reading CISO header")?;
         if header.magic != CISO_MAGIC {
             return Err(Error::DiscFormat("Invalid CISO magic".to_string()));

@@ -13,7 +13,7 @@ use crate::{
         SECTOR_SIZE,
     },
     io::{
-        block::{Block, BlockIO, DiscStream, PartitionInfo},
+        block::{Block, BlockIO, DiscStream, PartitionInfo, RVZ_MAGIC, WIA_MAGIC},
         nkit::NKitHeader,
         Compression, Format, HashBytes, KeyBytes, MagicBytes,
     },
@@ -26,9 +26,6 @@ use crate::{
     },
     DiscMeta, Error, Result, ResultContext,
 };
-
-pub const WIA_MAGIC: MagicBytes = *b"WIA\x01";
-pub const RVZ_MAGIC: MagicBytes = *b"RVZ\x01";
 
 /// This struct is stored at offset 0x0 and is 0x48 bytes long. The wit source code says its format
 /// will never be changed.
@@ -549,6 +546,7 @@ fn verify_hash(buf: &[u8], expected: &HashBytes) -> Result<()> {
 impl DiscIOWIA {
     pub fn new(mut inner: Box<dyn DiscStream>) -> Result<Box<Self>> {
         // Load & verify file header
+        inner.seek(SeekFrom::Start(0)).context("Seeking to start")?;
         let header: WIAFileHeader =
             read_from(inner.as_mut()).context("Reading WIA/RVZ file header")?;
         header.validate()?;

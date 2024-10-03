@@ -12,7 +12,7 @@ use crate::{
     disc::SECTOR_SIZE,
     io::{
         aes_decrypt,
-        block::{Block, BlockIO, PartitionInfo},
+        block::{Block, BlockIO, PartitionInfo, NFS_MAGIC},
         split::SplitFileReader,
         Format, KeyBytes, MagicBytes,
     },
@@ -21,7 +21,6 @@ use crate::{
     DiscMeta, Error, Result, ResultContext,
 };
 
-pub const NFS_MAGIC: MagicBytes = *b"EGGS";
 pub const NFS_END_MAGIC: MagicBytes = *b"SGGE";
 
 #[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]

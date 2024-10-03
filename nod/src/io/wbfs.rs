@@ -8,15 +8,13 @@ use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
 
 use crate::{
     io::{
-        block::{Block, BlockIO, DiscStream, PartitionInfo},
+        block::{Block, BlockIO, DiscStream, PartitionInfo, WBFS_MAGIC},
         nkit::NKitHeader,
         DiscMeta, Format, MagicBytes,
     },
     util::read::{read_box_slice, read_from},
     Error, Result, ResultContext,
 };
-
-pub const WBFS_MAGIC: MagicBytes = *b"WBFS";
 
 #[derive(Debug, Clone, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
@@ -52,6 +50,7 @@ pub struct DiscIOWBFS {
 
 impl DiscIOWBFS {
     pub fn new(mut inner: Box<dyn DiscStream>) -> Result<Box<Self>> {
+        inner.seek(SeekFrom::Start(0)).context("Seeking to start")?;
         let header: WBFSHeader = read_from(inner.as_mut()).context("Reading WBFS header")?;
         if header.magic != WBFS_MAGIC {
             return Err(Error::DiscFormat("Invalid WBFS magic".to_string()));

@@ -66,11 +66,11 @@ use std::{
 pub use disc::{
     ApploaderHeader, DiscHeader, DolHeader, FileStream, Fst, Node, NodeKind, OwnedFileStream,
     PartitionBase, PartitionHeader, PartitionKind, PartitionMeta, SignedHeader, Ticket,
-    TicketLimit, TmdHeader, WindowedStream, BI2_SIZE, BOOT_SIZE, SECTOR_SIZE,
+    TicketLimit, TmdHeader, WindowedStream, BI2_SIZE, BOOT_SIZE, GCN_MAGIC, SECTOR_SIZE, WII_MAGIC,
 };
 pub use io::{
     block::{DiscStream, PartitionInfo},
-    Compression, DiscMeta, Format, KeyBytes,
+    Compression, DiscMeta, Format, KeyBytes, MagicBytes,
 };
 
 mod disc;
@@ -188,6 +188,13 @@ impl Disc {
         let io = io::block::new(stream)?;
         let reader = disc::reader::DiscReader::new(io, options)?;
         Ok(Disc { reader, options: options.clone() })
+    }
+
+    /// Detects the format of a disc image from a read stream.
+    #[inline]
+    pub fn detect<R>(stream: &mut R) -> Result<Option<Format>>
+    where R: Read + ?Sized {
+        io::block::detect(stream)
     }
 
     /// The disc's primary header.

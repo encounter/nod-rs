@@ -136,8 +136,6 @@ impl Seek for SplitFileReader {
             if split.contains(self.pos) {
                 // Seek within the open file
                 split.inner.seek(SeekFrom::Start(self.pos - split.begin))?;
-            } else {
-                self.open_file = None;
             }
         }
         Ok(self.pos)
