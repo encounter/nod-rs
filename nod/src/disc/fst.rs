@@ -130,15 +130,17 @@ impl<'a> Fst<'a> {
     #[allow(clippy::missing_inline_in_public_items)]
     pub fn find(&self, path: &str) -> Option<(usize, Node)> {
         let mut split = path.trim_matches('/').split('/');
-        let mut current = split.next()?;
+        let mut current = next_non_empty(&mut split);
+        if current.is_empty() {
+            return Some((0, self.nodes[0]));
+        }
         let mut idx = 1;
         let mut stop_at = None;
         while let Some(node) = self.nodes.get(idx).copied() {
             if self.get_name(node).as_ref().map_or(false, |name| name.eq_ignore_ascii_case(current))
             {
-                if let Some(next) = split.next() {
-                    current = next;
-                } else {
+                current = next_non_empty(&mut split);
+                if current.is_empty() {
                     return Some((idx, node));
                 }
                 // Descend into directory
@@ -176,5 +178,16 @@ impl<'a> Iterator for FstIter<'a> {
         let name = self.fst.get_name(node);
         self.idx += 1;
         Some((idx, node, name))
+    }
+}
+
+#[inline]
+fn next_non_empty<'a>(iter: &mut impl Iterator<Item = &'a str>) -> &'a str {
+    loop {
+        match iter.next() {
+            Some("") => continue,
+            Some(next) => break next,
+            None => break "",
+        }
     }
 }
