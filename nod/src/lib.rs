@@ -192,7 +192,7 @@ impl Disc {
 
     /// Detects the format of a disc image from a read stream.
     #[inline]
-    pub fn detect<R>(stream: &mut R) -> Result<Option<Format>>
+    pub fn detect<R>(stream: &mut R) -> std::io::Result<Option<Format>>
     where R: Read + ?Sized {
         io::block::detect(stream)
     }

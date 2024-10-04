@@ -35,6 +35,11 @@ where T: BufRead + Seek
         base.seek(SeekFrom::Start(offset))?;
         Ok(Self { base, pos: offset, begin: offset, end: offset + size })
     }
+
+    /// Returns the length of the window.
+    #[inline]
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> u64 { self.end - self.begin }
 }
 
 impl<T> Read for WindowedStream<T>

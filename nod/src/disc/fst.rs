@@ -19,7 +19,7 @@ pub enum NodeKind {
 }
 
 /// An individual file system node.
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Copy, Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
 #[repr(C, align(4))]
 pub struct Node {
     kind: u8,
@@ -108,7 +108,7 @@ impl<'a> Fst<'a> {
 
     /// Get the name of a node.
     #[allow(clippy::missing_inline_in_public_items)]
-    pub fn get_name(&self, node: &Node) -> Result<Cow<'a, str>, String> {
+    pub fn get_name(&self, node: Node) -> Result<Cow<'a, str>, String> {
         let name_buf = self.string_table.get(node.name_offset() as usize..).ok_or_else(|| {
             format!(
                 "FST: name offset {} out of bounds (string table size: {})",
@@ -128,12 +128,12 @@ impl<'a> Fst<'a> {
 
     /// Finds a particular file or directory by path.
     #[allow(clippy::missing_inline_in_public_items)]
-    pub fn find(&self, path: &str) -> Option<(usize, &'a Node)> {
+    pub fn find(&self, path: &str) -> Option<(usize, Node)> {
         let mut split = path.trim_matches('/').split('/');
         let mut current = split.next()?;
         let mut idx = 1;
         let mut stop_at = None;
-        while let Some(node) = self.nodes.get(idx) {
+        while let Some(node) = self.nodes.get(idx).copied() {
             if self.get_name(node).as_ref().map_or(false, |name| name.eq_ignore_ascii_case(current))
             {
                 if let Some(next) = split.next() {
@@ -168,11 +168,11 @@ pub struct FstIter<'a> {
 }
 
 impl<'a> Iterator for FstIter<'a> {
-    type Item = (usize, &'a Node, Result<Cow<'a, str>, String>);
+    type Item = (usize, Node, Result<Cow<'a, str>, String>);
 
     fn next(&mut self) -> Option<Self::Item> {
         let idx = self.idx;
-        let node = self.fst.nodes.get(idx)?;
+        let node = self.fst.nodes.get(idx).copied()?;
         let name = self.fst.get_name(node);
         self.idx += 1;
         Some((idx, node, name))

@@ -3,6 +3,9 @@ use argp::FromArgs;
 pub mod cmd;
 pub(crate) mod util;
 
+// Re-export nod
+pub use nod;
+
 #[derive(FromArgs, Debug)]
 #[argp(subcommand)]
 pub enum SubCommand {

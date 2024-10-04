@@ -124,7 +124,7 @@ impl PartitionBase for PartitionGC {
         read_part_meta(self, false)
     }
 
-    fn open_file(&mut self, node: &Node) -> io::Result<FileStream> {
+    fn open_file(&mut self, node: Node) -> io::Result<FileStream> {
         if !node.is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -134,7 +134,7 @@ impl PartitionBase for PartitionGC {
         FileStream::new(self, node.offset(false), node.length())
     }
 
-    fn into_open_file(self: Box<Self>, node: &Node) -> io::Result<OwnedFileStream> {
+    fn into_open_file(self: Box<Self>, node: Node) -> io::Result<OwnedFileStream> {
         if !node.is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

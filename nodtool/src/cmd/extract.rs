@@ -181,7 +181,7 @@ fn extract_file(bytes: &[u8], out_path: &Path, quiet: bool) -> nod::Result<()> {
 }
 
 fn extract_node(
-    node: &Node,
+    node: Node,
     partition: &mut dyn PartitionBase,
     base_path: &Path,
     name: &str,

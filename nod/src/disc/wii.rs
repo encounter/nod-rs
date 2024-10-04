@@ -489,7 +489,7 @@ impl PartitionBase for PartitionWii {
         Ok(meta)
     }
 
-    fn open_file(&mut self, node: &Node) -> io::Result<FileStream> {
+    fn open_file(&mut self, node: Node) -> io::Result<FileStream> {
         if !node.is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -499,7 +499,7 @@ impl PartitionBase for PartitionWii {
         FileStream::new(self, node.offset(true), node.length())
     }
 
-    fn into_open_file(self: Box<Self>, node: &Node) -> io::Result<OwnedFileStream> {
+    fn into_open_file(self: Box<Self>, node: Node) -> io::Result<OwnedFileStream> {
         if !node.is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

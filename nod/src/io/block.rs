@@ -94,7 +94,7 @@ dyn_clone::clone_trait_object!(BlockIO);
 
 /// Creates a new [`BlockIO`] instance from a stream.
 pub fn new(mut stream: Box<dyn DiscStream>) -> Result<Box<dyn BlockIO>> {
-    let io: Box<dyn BlockIO> = match detect(stream.as_mut())? {
+    let io: Box<dyn BlockIO> = match detect(stream.as_mut()).context("Detecting file type")? {
         Some(Format::Iso) => crate::io::iso::DiscIOISO::new(stream)?,
         Some(Format::Ciso) => crate::io::ciso::DiscIOCISO::new(stream)?,
         Some(Format::Gcz) => {
@@ -103,9 +103,7 @@ pub fn new(mut stream: Box<dyn DiscStream>) -> Result<Box<dyn BlockIO>> {
                 crate::io::gcz::DiscIOGCZ::new(stream)?
             }
             #[cfg(not(feature = "compress-zlib"))]
-            {
-                return Err(Error::DiscFormat("GCZ support is disabled".to_string()));
-            }
+            return Err(Error::DiscFormat("GCZ support is disabled".to_string()));
         }
         Some(Format::Nfs) => {
             return Err(Error::DiscFormat("NFS requires a filesystem path".to_string()))
@@ -134,7 +132,7 @@ pub fn open(filename: &Path) -> Result<Box<dyn BlockIO>> {
         return Err(Error::DiscFormat(format!("Input is not a file: {}", filename.display())));
     }
     let mut stream = Box::new(SplitFileReader::new(filename)?);
-    let io: Box<dyn BlockIO> = match detect(stream.as_mut())? {
+    let io: Box<dyn BlockIO> = match detect(stream.as_mut()).context("Detecting file type")? {
         Some(Format::Iso) => crate::io::iso::DiscIOISO::new(stream)?,
         Some(Format::Ciso) => crate::io::ciso::DiscIOCISO::new(stream)?,
         Some(Format::Gcz) => {
@@ -143,9 +141,7 @@ pub fn open(filename: &Path) -> Result<Box<dyn BlockIO>> {
                 crate::io::gcz::DiscIOGCZ::new(stream)?
             }
             #[cfg(not(feature = "compress-zlib"))]
-            {
-                return Err(Error::DiscFormat("GCZ support is disabled".to_string()));
-            }
+            return Err(Error::DiscFormat("GCZ support is disabled".to_string()));
         }
         Some(Format::Nfs) => match path.parent() {
             Some(parent) if parent.is_dir() => {
@@ -172,11 +168,11 @@ pub const WBFS_MAGIC: MagicBytes = *b"WBFS";
 pub const WIA_MAGIC: MagicBytes = *b"WIA\x01";
 pub const RVZ_MAGIC: MagicBytes = *b"RVZ\x01";
 
-pub fn detect<R: Read + ?Sized>(stream: &mut R) -> Result<Option<Format>> {
+pub fn detect<R: Read + ?Sized>(stream: &mut R) -> io::Result<Option<Format>> {
     let data: [u8; 0x20] = match read_from(stream) {
         Ok(magic) => magic,
         Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(e).context("Reading magic bytes"),
+        Err(e) => return Err(e),
     };
     let out = match *array_ref!(data, 0, 4) {
         CISO_MAGIC => Some(Format::Ciso),

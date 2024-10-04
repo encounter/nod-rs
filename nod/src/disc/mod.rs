@@ -313,7 +313,7 @@ pub trait PartitionBase: DynClone + BufRead + Seek + Send + Sync {
     ///     Ok(())
     /// }
     /// ```
-    fn open_file(&mut self, node: &Node) -> io::Result<FileStream>;
+    fn open_file(&mut self, node: Node) -> io::Result<FileStream>;
 
     /// Consumes the partition instance and returns a windowed stream.
     ///
@@ -342,7 +342,7 @@ pub trait PartitionBase: DynClone + BufRead + Seek + Send + Sync {
     ///     Ok(())
     /// }
     /// ```
-    fn into_open_file(self: Box<Self>, node: &Node) -> io::Result<OwnedFileStream>;
+    fn into_open_file(self: Box<Self>, node: Node) -> io::Result<OwnedFileStream>;
 }
 
 dyn_clone::clone_trait_object!(PartitionBase);
