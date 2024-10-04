@@ -14,7 +14,7 @@ pub struct PathDisplay<'a> {
     path: &'a Path,
 }
 
-impl<'a> fmt::Display for PathDisplay<'a> {
+impl fmt::Display for PathDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut first = true;
         for segment in self.path.iter() {
