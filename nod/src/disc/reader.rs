@@ -3,7 +3,7 @@ use std::{
     io::{BufRead, Read, Seek, SeekFrom},
 };
 
-use zerocopy::FromZeroes;
+use zerocopy::FromZeros;
 
 use super::{
     gcn::PartitionGC,
@@ -43,9 +43,9 @@ impl Clone for DiscReader {
         Self {
             io: self.io.clone(),
             block: Block::default(),
-            block_buf: <u8>::new_box_slice_zeroed(self.block_buf.len()),
+            block_buf: <[u8]>::new_box_zeroed_with_elems(self.block_buf.len()).unwrap(),
             block_idx: u32::MAX,
-            sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed(),
+            sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed().unwrap(),
             sector_idx: u32::MAX,
             pos: 0,
             mode: self.mode,
@@ -63,9 +63,9 @@ impl DiscReader {
         let mut reader = Self {
             io: inner,
             block: Block::default(),
-            block_buf: <u8>::new_box_slice_zeroed(block_size as usize),
+            block_buf: <[u8]>::new_box_zeroed_with_elems(block_size as usize)?,
             block_idx: u32::MAX,
-            sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed(),
+            sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed()?,
             sector_idx: u32::MAX,
             pos: 0,
             mode: if options.rebuild_encryption {
@@ -73,7 +73,7 @@ impl DiscReader {
             } else {
                 EncryptionMode::Decrypted
             },
-            disc_header: DiscHeader::new_box_zeroed(),
+            disc_header: DiscHeader::new_box_zeroed()?,
             partitions: vec![],
             hash_tables: vec![],
         };
@@ -278,8 +278,8 @@ fn read_partition_info(reader: &mut DiscReader) -> Result<Vec<PartitionInfo>> {
                 data_end_sector: (data_end_offset / SECTOR_SIZE as u64) as u32,
                 key,
                 header,
-                disc_header: DiscHeader::new_box_zeroed(),
-                partition_header: PartitionHeader::new_box_zeroed(),
+                disc_header: DiscHeader::new_box_zeroed()?,
+                partition_header: PartitionHeader::new_box_zeroed()?,
                 hash_table: None,
             };
 

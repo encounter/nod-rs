@@ -4,7 +4,7 @@ use std::{
     mem::size_of,
 };
 
-use zerocopy::{FromBytes, FromZeroes};
+use zerocopy::{FromBytes, FromZeros};
 
 use super::{
     ApploaderHeader, DiscHeader, DolHeader, FileStream, Node, PartitionBase, PartitionHeader,
@@ -33,9 +33,9 @@ impl Clone for PartitionGC {
         Self {
             io: self.io.clone(),
             block: Block::default(),
-            block_buf: <u8>::new_box_slice_zeroed(self.block_buf.len()),
+            block_buf: <[u8]>::new_box_zeroed_with_elems(self.block_buf.len()).unwrap(),
             block_idx: u32::MAX,
-            sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed(),
+            sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed().unwrap(),
             sector: u32::MAX,
             pos: 0,
             disc_header: self.disc_header.clone(),
@@ -49,9 +49,9 @@ impl PartitionGC {
         Ok(Box::new(Self {
             io: inner,
             block: Block::default(),
-            block_buf: <u8>::new_box_slice_zeroed(block_size as usize),
+            block_buf: <[u8]>::new_box_zeroed_with_elems(block_size as usize).unwrap(),
             block_idx: u32::MAX,
-            sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed(),
+            sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed().unwrap(),
             sector: u32::MAX,
             pos: 0,
             disc_header,
@@ -151,7 +151,8 @@ pub(crate) fn read_part_meta(
 ) -> Result<Box<PartitionMeta>> {
     // boot.bin
     let raw_boot: Box<[u8; BOOT_SIZE]> = read_box(reader).context("Reading boot.bin")?;
-    let partition_header = PartitionHeader::ref_from(&raw_boot[size_of::<DiscHeader>()..]).unwrap();
+    let partition_header =
+        PartitionHeader::ref_from_bytes(&raw_boot[size_of::<DiscHeader>()..]).unwrap();
 
     // bi2.bin
     let raw_bi2: Box<[u8; BI2_SIZE]> = read_box(reader).context("Reading bi2.bin")?;
@@ -159,7 +160,7 @@ pub(crate) fn read_part_meta(
     // apploader.bin
     let mut raw_apploader: Vec<u8> =
         read_vec(reader, size_of::<ApploaderHeader>()).context("Reading apploader header")?;
-    let apploader_header = ApploaderHeader::ref_from(raw_apploader.as_slice()).unwrap();
+    let apploader_header = ApploaderHeader::ref_from_bytes(raw_apploader.as_slice()).unwrap();
     raw_apploader.resize(
         size_of::<ApploaderHeader>()
             + apploader_header.size.get() as usize
@@ -189,7 +190,7 @@ pub(crate) fn read_part_meta(
         .context("Seeking to DOL offset")?;
     let mut raw_dol: Vec<u8> =
         read_vec(reader, size_of::<DolHeader>()).context("Reading DOL header")?;
-    let dol_header = DolHeader::ref_from(raw_dol.as_slice()).unwrap();
+    let dol_header = DolHeader::ref_from_bytes(raw_dol.as_slice()).unwrap();
     let dol_size = dol_header
         .text_offs
         .iter()

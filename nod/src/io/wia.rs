@@ -4,7 +4,7 @@ use std::{
     mem::size_of,
 };
 
-use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
+use zerocopy::{big_endian::*, FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
     disc::{
@@ -28,7 +28,7 @@ use crate::{
 
 /// This struct is stored at offset 0x0 and is 0x48 bytes long. The wit source code says its format
 /// will never be changed.
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct WIAFileHeader {
     pub magic: MagicBytes,
@@ -142,7 +142,7 @@ impl TryFrom<u32> for WIACompression {
 const DISC_HEAD_SIZE: usize = 0x80;
 
 /// This struct is stored at offset 0x48, immediately after [WIAFileHeader].
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct WIADisc {
     /// The disc type. (1 = GameCube, 2 = Wii)
@@ -236,7 +236,7 @@ impl WIADisc {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct WIAPartitionData {
     /// The sector on the disc at which this data starts.
@@ -271,7 +271,7 @@ impl WIAPartitionData {
 /// the reading program must first recalculate the hashes as done when creating a Wii disc image
 /// from scratch (see <https://wiibrew.org/wiki/Wii_Disc>), and must then apply the hash exceptions
 /// which are stored along with the data (see the [WIAExceptionList] section).
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct WIAPartition {
     /// The title key for this partition (128-bit AES), which can be used for re-encrypting the
@@ -298,7 +298,7 @@ static_assert!(size_of::<WIAPartition>() == 0x30);
 /// should be read from [WIADisc] instead.) This should be handled by rounding the offset down to
 /// the previous multiple of 0x8000 (and adding the equivalent amount to the size so that the end
 /// offset stays the same), not by special casing the first [WIARawData].
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct WIARawData {
     /// The offset on the disc at which this data starts.
@@ -336,7 +336,7 @@ impl WIARawData {
 /// counting any [WIAExceptionList] structs. However, the last [WIAGroup] of a [WIAPartitionData]
 /// or [WIARawData] contains less data than that if `num_sectors * 0x8000` (for [WIAPartitionData])
 /// or `raw_data_size` (for [WIARawData]) is not evenly divisible by `chunk_size`.
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct WIAGroup {
     /// The offset in the file where the compressed data is stored.
@@ -351,7 +351,7 @@ pub struct WIAGroup {
 
 /// Compared to [WIAGroup], [RVZGroup] changes the meaning of the most significant bit of
 /// [data_size](Self::data_size) and adds one additional attribute.
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct RVZGroup {
     /// The offset in the file where the compressed data is stored, divided by 4.
@@ -398,7 +398,7 @@ impl From<&WIAGroup> for RVZGroup {
 /// write [WIAException] structs for a padding area which is 32 bytes long, it writes one which
 /// covers the first 20 bytes of the padding area and one which covers the last 20 bytes of the
 /// padding area, generating 12 bytes of overlap between the [WIAException] structs.
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(2))]
 pub struct WIAException {
     /// The offset among the hashes. The offsets 0x0000-0x0400 here map to the offsets 0x0000-0x0400
@@ -559,7 +559,7 @@ impl DiscIOWIA {
             .context("Reading WIA/RVZ disc header")?;
         verify_hash(&disc_buf, &header.disc_hash)?;
         disc_buf.resize(size_of::<WIADisc>(), 0);
-        let disc = WIADisc::read_from(disc_buf.as_slice()).unwrap();
+        let disc = WIADisc::read_from_bytes(disc_buf.as_slice()).unwrap();
         disc.validate()?;
         // if !options.rebuild_hashes {
         //     // If we're not rebuilding hashes, disable partition hashes in disc header

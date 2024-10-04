@@ -4,7 +4,7 @@ use std::{
     mem::size_of,
 };
 
-use zerocopy::{big_endian::U32, AsBytes, FromBytes, FromZeroes};
+use zerocopy::{big_endian::U32, FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
     disc::SECTOR_SIZE,
@@ -17,7 +17,7 @@ use crate::{
 };
 
 /// TGC header (big endian)
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 struct TGCHeader {
     /// Magic bytes
@@ -75,11 +75,11 @@ impl DiscIOTGC {
             .context("Seeking to TGC FST")?;
         let mut fst = read_box_slice(inner.as_mut(), header.fst_size.get() as usize)
             .context("Reading TGC FST")?;
-        let root_node = Node::ref_from_prefix(&fst)
-            .ok_or_else(|| Error::DiscFormat("Invalid TGC FST".to_string()))?;
+        let (root_node, _) = Node::ref_from_prefix(&fst)
+            .map_err(|_| Error::DiscFormat("Invalid TGC FST".to_string()))?;
         let node_count = root_node.length() as usize;
-        let (nodes, _) = Node::mut_slice_from_prefix(&mut fst, node_count)
-            .ok_or_else(|| Error::DiscFormat("Invalid TGC FST".to_string()))?;
+        let (nodes, _) = <[Node]>::mut_from_prefix_with_elems(&mut fst, node_count)
+            .map_err(|_| Error::DiscFormat("Invalid TGC FST".to_string()))?;
         for node in nodes {
             if node.is_file() {
                 node.offset = node.offset - header.gcm_user_offset
@@ -116,7 +116,7 @@ impl BlockIO for DiscIOTGC {
 
         // Adjust internal GCM header
         if block == 0 {
-            let partition_header = PartitionHeader::mut_from(
+            let partition_header = PartitionHeader::mut_from_bytes(
                 &mut out[size_of::<DiscHeader>()
                     ..size_of::<DiscHeader>() + size_of::<PartitionHeader>()],
             )

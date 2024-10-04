@@ -10,7 +10,7 @@ use std::{
 use hex::deserialize as deserialize_hex;
 use nod::{array_ref, Result};
 use serde::Deserialize;
-use zerocopy::{AsBytes, FromBytes, FromZeroes};
+use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
 
 #[derive(Clone, Debug)]
 pub struct GameResult<'a> {
@@ -33,18 +33,15 @@ impl<'a> Iterator for EntryIter<'a> {
     type Item = GameResult<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let header: &Header = Header::ref_from_prefix(self.data).unwrap();
+        let (header, remaining) = Header::ref_from_prefix(self.data).ok()?;
         assert_eq!(header.entry_size as usize, size_of::<GameEntry>());
         if self.index >= header.entry_count as usize {
             return None;
         }
 
         let entries_size = header.entry_count as usize * size_of::<GameEntry>();
-        let entries: &[GameEntry] = GameEntry::slice_from(
-            &self.data[size_of::<Header>()..size_of::<Header>() + entries_size],
-        )
-        .unwrap();
-        let string_table: &[u8] = &self.data[size_of::<Header>() + entries_size..];
+        let entries = <[GameEntry]>::ref_from_bytes(&remaining[..entries_size]).ok()?;
+        let string_table = &self.data[size_of::<Header>() + entries_size..];
 
         let entry = &entries[self.index];
         let offset = entry.string_table_offset as usize;
@@ -57,14 +54,12 @@ impl<'a> Iterator for EntryIter<'a> {
 
 pub fn find_by_crc32(crc32: u32) -> Option<GameResult<'static>> {
     let data = loaded_data();
-    let header: &Header = Header::ref_from_prefix(data).unwrap();
+    let (header, remaining) = Header::ref_from_prefix(data).ok()?;
     assert_eq!(header.entry_size as usize, size_of::<GameEntry>());
 
     let entries_size = header.entry_count as usize * size_of::<GameEntry>();
-    let entries: &[GameEntry] =
-        GameEntry::slice_from(&data[size_of::<Header>()..size_of::<Header>() + entries_size])
-            .unwrap();
-    let string_table: &[u8] = &data[size_of::<Header>() + entries_size..];
+    let (entries_buf, string_table) = remaining.split_at(entries_size);
+    let entries = <[GameEntry]>::ref_from_bytes(entries_buf).ok()?;
 
     // Binary search by CRC32
     let index = entries.binary_search_by_key(&crc32, |entry| entry.crc32).ok()?;
@@ -84,7 +79,7 @@ fn loaded_data() -> &'static [u8] {
     LOADED
         .get_or_init(|| {
             let size = zstd::zstd_safe::get_frame_content_size(BUILTIN).unwrap().unwrap() as usize;
-            let mut out = <u8>::new_box_slice_zeroed(size);
+            let mut out = <[u8]>::new_box_zeroed_with_elems(size).unwrap();
             let out_size = zstd::bulk::Decompressor::new()
                 .unwrap()
                 .decompress_to_buffer(BUILTIN, out.as_mut())
@@ -126,7 +121,7 @@ pub fn load_dats<'a>(paths: impl Iterator<Item = &'a Path>) -> Result<()> {
     let entries_size = entries.len() * size_of::<GameEntry>();
     let string_table_size = entries.iter().map(|(_, name)| name.len() + 4).sum::<usize>();
     let total_size = size_of::<Header>() + entries_size + string_table_size;
-    let mut result = <u8>::new_box_slice_zeroed(total_size);
+    let mut result = <[u8]>::new_box_zeroed_with_elems(total_size)?;
     let mut out = Cursor::new(result.as_mut());
 
     // Write game entries
@@ -152,7 +147,7 @@ pub fn load_dats<'a>(paths: impl Iterator<Item = &'a Path>) -> Result<()> {
 }
 
 // Keep in sync with build.rs
-#[derive(Clone, Debug, AsBytes, FromBytes, FromZeroes)]
+#[derive(Clone, Debug, IntoBytes, FromBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 struct Header {
     entry_count: u32,
@@ -160,7 +155,7 @@ struct Header {
 }
 
 // Keep in sync with build.rs
-#[derive(Clone, Debug, AsBytes, FromBytes, FromZeroes)]
+#[derive(Clone, Debug, IntoBytes, FromBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 struct GameEntry {
     crc32: u32,

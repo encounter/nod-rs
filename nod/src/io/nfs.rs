@@ -6,7 +6,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use zerocopy::{big_endian::U32, AsBytes, FromBytes, FromZeroes};
+use zerocopy::{big_endian::U32, FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
     disc::SECTOR_SIZE,
@@ -23,14 +23,14 @@ use crate::{
 
 pub const NFS_END_MAGIC: MagicBytes = *b"SGGE";
 
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 struct LBARange {
     start_sector: U32,
     num_sectors: U32,
 }
 
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 struct NFSHeader {
     magic: MagicBytes,

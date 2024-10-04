@@ -38,5 +38,5 @@ miniz_oxide = { version = "0.8", optional = true }
 rayon = "1.10"
 sha1 = "0.10"
 thiserror = "1.0"
-zerocopy = { version = "0.7", features = ["alloc", "derive"] }
+zerocopy = { version = "0.8", features = ["alloc", "derive"] }
 zstd = { version = "0.13", optional = true }

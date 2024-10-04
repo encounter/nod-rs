@@ -11,7 +11,7 @@ use std::{
 };
 
 use dyn_clone::DynClone;
-use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
+use zerocopy::{big_endian::*, FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{io::MagicBytes, static_assert, Result};
 
@@ -38,7 +38,7 @@ pub const GCN_MAGIC: MagicBytes = [0xC2, 0x33, 0x9F, 0x3D];
 /// Shared GameCube & Wii disc header.
 ///
 /// This header is always at the start of the disc image and within each Wii partition.
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct DiscHeader {
     /// Game ID (e.g. GM8E01 for Metroid Prime)
@@ -97,7 +97,7 @@ impl DiscHeader {
 /// **GameCube**: Always follows the disc header.
 ///
 /// **Wii**: Follows the disc header within each partition.
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct PartitionHeader {
     /// Debug monitor offset
@@ -169,7 +169,7 @@ impl PartitionHeader {
 }
 
 /// Apploader header.
-#[derive(Debug, PartialEq, Clone, FromBytes, FromZeroes, AsBytes)]
+#[derive(Debug, PartialEq, Clone, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct ApploaderHeader {
     /// Apploader build date
@@ -198,7 +198,7 @@ pub const DOL_MAX_TEXT_SECTIONS: usize = 7;
 pub const DOL_MAX_DATA_SECTIONS: usize = 11;
 
 /// Dolphin executable (DOL) header.
-#[derive(Debug, Clone, FromBytes, FromZeroes)]
+#[derive(Debug, Clone, FromBytes, Immutable, KnownLayout)]
 pub struct DolHeader {
     /// Text section offsets
     pub text_offs: [U32; DOL_MAX_TEXT_SECTIONS],
@@ -379,19 +379,19 @@ impl PartitionMeta {
     /// A view into the disc header.
     #[inline]
     pub fn header(&self) -> &DiscHeader {
-        DiscHeader::ref_from(&self.raw_boot[..size_of::<DiscHeader>()]).unwrap()
+        DiscHeader::ref_from_bytes(&self.raw_boot[..size_of::<DiscHeader>()]).unwrap()
     }
 
     /// A view into the partition header.
     #[inline]
     pub fn partition_header(&self) -> &PartitionHeader {
-        PartitionHeader::ref_from(&self.raw_boot[size_of::<DiscHeader>()..]).unwrap()
+        PartitionHeader::ref_from_bytes(&self.raw_boot[size_of::<DiscHeader>()..]).unwrap()
     }
 
     /// A view into the apploader header.
     #[inline]
     pub fn apploader_header(&self) -> &ApploaderHeader {
-        ApploaderHeader::ref_from_prefix(&self.raw_apploader).unwrap()
+        ApploaderHeader::ref_from_prefix(&self.raw_apploader).unwrap().0
     }
 
     /// A view into the file system table (FST).
@@ -400,18 +400,18 @@ impl PartitionMeta {
 
     /// A view into the DOL header.
     #[inline]
-    pub fn dol_header(&self) -> &DolHeader { DolHeader::ref_from_prefix(&self.raw_dol).unwrap() }
+    pub fn dol_header(&self) -> &DolHeader { DolHeader::ref_from_prefix(&self.raw_dol).unwrap().0 }
 
     /// A view into the ticket. (Wii only)
     #[inline]
     pub fn ticket(&self) -> Option<&Ticket> {
-        self.raw_ticket.as_ref().and_then(|v| Ticket::ref_from(v))
+        self.raw_ticket.as_ref().and_then(|v| Ticket::ref_from_bytes(v).ok())
     }
 
     /// A view into the TMD. (Wii only)
     #[inline]
     pub fn tmd_header(&self) -> Option<&TmdHeader> {
-        self.raw_tmd.as_ref().and_then(|v| TmdHeader::ref_from_prefix(v))
+        self.raw_tmd.as_ref().and_then(|v| TmdHeader::ref_from_prefix(v).ok().map(|(v, _)| v))
     }
 }
 

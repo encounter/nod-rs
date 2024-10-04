@@ -11,7 +11,7 @@ use std::{
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use nod::{Compression, Disc, DiscHeader, DiscMeta, OpenOptions, Result, ResultContext};
 use size::Size;
-use zerocopy::FromZeroes;
+use zerocopy::FromZeros;
 
 use crate::util::{
     digest::{digest_thread, DigestResult},
@@ -117,7 +117,7 @@ pub fn convert_and_verify(in_file: &Path, out_file: Option<&Path>, md5: bool) ->
     });
 
     let mut total_read = 0u64;
-    let mut buf = <u8>::new_box_slice_zeroed(BUFFER_SIZE);
+    let mut buf = <[u8]>::new_box_zeroed_with_elems(BUFFER_SIZE)?;
     while total_read < disc_size {
         let read = min(BUFFER_SIZE as u64, disc_size - total_read) as usize;
         disc.read_exact(&mut buf[..read]).with_context(|| {

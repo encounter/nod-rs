@@ -6,7 +6,7 @@ use std::{
 
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use sha1::{Digest, Sha1};
-use zerocopy::FromZeroes;
+use zerocopy::FromZeros;
 
 use crate::{
     array_ref, array_ref_mut,
@@ -39,7 +39,7 @@ pub struct HashTable {
     pub h3_hashes: Box<[HashBytes]>,
 }
 
-#[derive(Clone, FromZeroes)]
+#[derive(Clone, FromZeros)]
 struct HashResult {
     h0_hashes: [HashBytes; 1984],
     h1_hashes: [HashBytes; 64],
@@ -54,10 +54,10 @@ impl HashTable {
         let num_subgroups = num_sectors / 8;
         let num_groups = num_subgroups / 8;
         Self {
-            h0_hashes: HashBytes::new_box_slice_zeroed(num_data_hashes),
-            h1_hashes: HashBytes::new_box_slice_zeroed(num_sectors),
-            h2_hashes: HashBytes::new_box_slice_zeroed(num_subgroups),
-            h3_hashes: HashBytes::new_box_slice_zeroed(num_groups),
+            h0_hashes: <[HashBytes]>::new_box_zeroed_with_elems(num_data_hashes).unwrap(),
+            h1_hashes: <[HashBytes]>::new_box_zeroed_with_elems(num_sectors).unwrap(),
+            h2_hashes: <[HashBytes]>::new_box_zeroed_with_elems(num_subgroups).unwrap(),
+            h3_hashes: <[HashBytes]>::new_box_zeroed_with_elems(num_groups).unwrap(),
         }
     }
 
@@ -100,8 +100,8 @@ pub fn rebuild_hashes(reader: &mut DiscReader) -> Result<()> {
         (0..group_count).into_par_iter().try_for_each_with(
             (reader.open_partition(part.index, &OpenOptions::default())?, mutex.clone()),
             |(stream, mutex), h3_index| -> Result<()> {
-                let mut result = HashResult::new_box_zeroed();
-                let mut data_buf = <u8>::new_box_slice_zeroed(SECTOR_DATA_SIZE);
+                let mut result = HashResult::new_box_zeroed()?;
+                let mut data_buf = <[u8]>::new_box_zeroed_with_elems(SECTOR_DATA_SIZE)?;
                 let mut h3_hasher = Sha1::new();
                 for h2_index in 0..8 {
                     let mut h2_hasher = Sha1::new();

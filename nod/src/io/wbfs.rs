@@ -4,7 +4,7 @@ use std::{
     mem::size_of,
 };
 
-use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
+use zerocopy::{big_endian::*, FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
     io::{
@@ -16,7 +16,7 @@ use crate::{
     Error, Result, ResultContext,
 };
 
-#[derive(Debug, Clone, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 struct WBFSHeader {
     magic: MagicBytes,

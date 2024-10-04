@@ -4,7 +4,7 @@ use std::{
     mem::size_of,
 };
 
-use zerocopy::{little_endian::*, AsBytes, FromBytes, FromZeroes};
+use zerocopy::{little_endian::*, FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
     disc::SECTOR_SIZE,
@@ -21,7 +21,7 @@ use crate::{
 pub const CISO_MAP_SIZE: usize = SECTOR_SIZE - 8;
 
 /// CISO header (little endian)
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 struct CISOHeader {
     magic: MagicBytes,

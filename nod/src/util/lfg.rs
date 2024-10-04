@@ -1,6 +1,6 @@
 use std::{cmp::min, io, io::Read};
 
-use zerocopy::{transmute_ref, AsBytes};
+use zerocopy::{transmute_ref, IntoBytes};
 
 use crate::disc::SECTOR_SIZE;
 
@@ -64,7 +64,7 @@ impl LaggedFibonacci {
 
     pub fn init_with_reader<R>(&mut self, reader: &mut R) -> io::Result<()>
     where R: Read + ?Sized {
-        reader.read_exact(self.buffer[..SEED_SIZE].as_bytes_mut())?;
+        reader.read_exact(self.buffer[..SEED_SIZE].as_mut_bytes())?;
         for x in self.buffer[..SEED_SIZE].iter_mut() {
             *x = u32::from_be(*x);
         }

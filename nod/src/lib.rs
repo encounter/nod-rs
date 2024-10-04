@@ -89,6 +89,9 @@ pub enum Error {
     /// An unknown error.
     #[error("error: {0}")]
     Other(String),
+    /// An error occurred while allocating memory.
+    #[error("allocation failed")]
+    Alloc(zerocopy::AllocError),
 }
 
 impl From<&str> for Error {
@@ -99,6 +102,11 @@ impl From<&str> for Error {
 impl From<String> for Error {
     #[inline]
     fn from(s: String) -> Error { Error::Other(s) }
+}
+
+impl From<zerocopy::AllocError> for Error {
+    #[inline]
+    fn from(e: zerocopy::AllocError) -> Error { Error::Alloc(e) }
 }
 
 /// Helper result type for [`Error`].

@@ -11,7 +11,7 @@ use std::{
 use argp::FromArgs;
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use nod::{Disc, OpenOptions, Result, ResultContext};
-use zerocopy::FromZeroes;
+use zerocopy::FromZeros;
 
 use crate::util::{
     digest::{digest_thread, DigestResult},
@@ -199,7 +199,7 @@ fn load_disc(path: &Path, name: &str, full_verify: bool) -> Result<DiscHashes> {
     });
 
     let mut total_read = 0u64;
-    let mut buf = <u8>::new_box_slice_zeroed(BUFFER_SIZE);
+    let mut buf = <[u8]>::new_box_zeroed_with_elems(BUFFER_SIZE)?;
     while total_read < disc_size {
         let read = min(BUFFER_SIZE as u64, disc_size - total_read) as usize;
         disc.read_exact(&mut buf[..read]).with_context(|| {

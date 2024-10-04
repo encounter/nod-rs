@@ -13,7 +13,7 @@ use nod::{
     ResultContext,
 };
 use size::{Base, Size};
-use zerocopy::AsBytes;
+use zerocopy::IntoBytes;
 
 use crate::util::{display, has_extension};
 

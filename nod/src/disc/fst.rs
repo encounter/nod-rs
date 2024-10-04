@@ -3,7 +3,7 @@
 use std::{borrow::Cow, ffi::CStr, mem::size_of};
 
 use encoding_rs::SHIFT_JIS;
-use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
+use zerocopy::{big_endian::*, FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{static_assert, Result};
 
@@ -19,7 +19,7 @@ pub enum NodeKind {
 }
 
 /// An individual file system node.
-#[derive(Copy, Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Copy, Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct Node {
     kind: u8,
@@ -89,7 +89,7 @@ impl<'a> Fst<'a> {
     /// Create a new FST view from a buffer.
     #[allow(clippy::missing_inline_in_public_items)]
     pub fn new(buf: &'a [u8]) -> Result<Self, &'static str> {
-        let Some(root_node) = Node::ref_from_prefix(buf) else {
+        let Ok((root_node, _)) = Node::ref_from_prefix(buf) else {
             return Err("FST root node not found");
         };
         // String table starts after the last node
@@ -98,7 +98,7 @@ impl<'a> Fst<'a> {
             return Err("FST string table out of bounds");
         }
         let (node_buf, string_table) = buf.split_at(string_base as usize);
-        let nodes = Node::slice_from(node_buf).unwrap();
+        let nodes = <[Node]>::ref_from_bytes(node_buf).unwrap();
         Ok(Self { nodes, string_table })
     }
 

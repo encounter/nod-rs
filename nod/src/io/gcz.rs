@@ -6,7 +6,7 @@ use std::{
 
 use adler::adler32_slice;
 use miniz_oxide::{inflate, inflate::core::inflate_flags};
-use zerocopy::{little_endian::*, AsBytes, FromBytes, FromZeroes};
+use zerocopy::{little_endian::*, FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
 use zstd::zstd_safe::WriteBuf;
 
 use crate::{
@@ -20,7 +20,7 @@ use crate::{
 };
 
 /// GCZ header (little endian)
-#[derive(Clone, Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Clone, Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 struct GCZHeader {
     magic: MagicBytes,
@@ -49,7 +49,7 @@ impl Clone for DiscIOGCZ {
             header: self.header.clone(),
             block_map: self.block_map.clone(),
             block_hashes: self.block_hashes.clone(),
-            block_buf: <u8>::new_box_slice_zeroed(self.block_buf.len()),
+            block_buf: <[u8]>::new_box_zeroed_with_elems(self.block_buf.len()).unwrap(),
             data_offset: self.data_offset,
         }
     }
@@ -73,7 +73,7 @@ impl DiscIOGCZ {
 
         // header + block_count * (u64 + u32)
         let data_offset = size_of::<GCZHeader>() as u64 + block_count as u64 * 12;
-        let block_buf = <u8>::new_box_slice_zeroed(header.block_size.get() as usize);
+        let block_buf = <[u8]>::new_box_zeroed_with_elems(header.block_size.get() as usize)?;
         Ok(Box::new(Self { inner, header, block_map, block_hashes, block_buf, data_offset }))
     }
 }

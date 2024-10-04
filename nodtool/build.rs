@@ -8,10 +8,10 @@ use std::{
 
 use hex::deserialize as deserialize_hex;
 use serde::Deserialize;
-use zerocopy::AsBytes;
+use zerocopy::{Immutable, IntoBytes, KnownLayout};
 
 // Keep in sync with build.rs
-#[derive(Clone, Debug, AsBytes)]
+#[derive(Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 struct Header {
     entry_count: u32,
@@ -19,7 +19,7 @@ struct Header {
 }
 
 // Keep in sync with redump.rs
-#[derive(Clone, Debug, AsBytes)]
+#[derive(Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 struct GameEntry {
     crc32: u32,

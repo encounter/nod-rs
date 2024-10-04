@@ -6,7 +6,7 @@ use std::{
 };
 
 use sha1::{Digest, Sha1};
-use zerocopy::{big_endian::*, AsBytes, FromBytes, FromZeroes};
+use zerocopy::{big_endian::*, FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
 
 use super::{
     gcn::{read_part_meta, PartitionGC},
@@ -55,7 +55,7 @@ const DEBUG_COMMON_KEYS: [KeyBytes; 3] = [
     [0x2f, 0x5c, 0x1b, 0x29, 0x44, 0xe7, 0xfd, 0x6f, 0xc3, 0x97, 0x96, 0x4b, 0x05, 0x76, 0x91, 0xfa],
 ];
 
-#[derive(Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub(crate) struct WiiPartEntry {
     pub(crate) offset: U32,
@@ -70,7 +70,7 @@ impl WiiPartEntry {
 
 pub(crate) const WII_PART_GROUP_OFF: u64 = 0x40000;
 
-#[derive(Debug, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Debug, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub(crate) struct WiiPartGroup {
     pub(crate) part_count: U32,
@@ -84,7 +84,7 @@ impl WiiPartGroup {
 }
 
 /// Signed blob header
-#[derive(Debug, Clone, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct SignedHeader {
     /// Signature type, always 0x00010001 (RSA-2048)
@@ -97,7 +97,7 @@ pub struct SignedHeader {
 static_assert!(size_of::<SignedHeader>() == 0x140);
 
 /// Ticket limit
-#[derive(Debug, Clone, PartialEq, Default, FromBytes, FromZeroes, AsBytes)]
+#[derive(Debug, Clone, PartialEq, Default, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct TicketLimit {
     /// Limit type
@@ -109,7 +109,7 @@ pub struct TicketLimit {
 static_assert!(size_of::<TicketLimit>() == 8);
 
 /// Wii ticket
-#[derive(Debug, Clone, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct Ticket {
     /// Signed blob header
@@ -179,7 +179,7 @@ impl Ticket {
 }
 
 /// Title metadata header
-#[derive(Debug, Clone, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct TmdHeader {
     /// Signed blob header
@@ -227,7 +227,7 @@ static_assert!(size_of::<TmdHeader>() == 0x1E4);
 
 pub const H3_TABLE_SIZE: usize = 0x18000;
 
-#[derive(Debug, Clone, PartialEq, FromBytes, FromZeroes, AsBytes)]
+#[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, align(4))]
 pub struct WiiPartitionHeader {
     pub ticket: Ticket,
@@ -281,9 +281,9 @@ impl Clone for PartitionWii {
             io: self.io.clone(),
             partition: self.partition.clone(),
             block: Block::default(),
-            block_buf: <u8>::new_box_slice_zeroed(self.block_buf.len()),
+            block_buf: <[u8]>::new_box_zeroed_with_elems(self.block_buf.len()).unwrap(),
             block_idx: u32::MAX,
-            sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed(),
+            sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed().unwrap(),
             sector: u32::MAX,
             pos: 0,
             verify: self.verify,
@@ -327,9 +327,9 @@ impl PartitionWii {
             io: reader.into_inner(),
             partition: partition.clone(),
             block: Block::default(),
-            block_buf: <u8>::new_box_slice_zeroed(block_size as usize),
+            block_buf: <[u8]>::new_box_zeroed_with_elems(block_size as usize)?,
             block_idx: u32::MAX,
-            sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed(),
+            sector_buf: <[u8; SECTOR_SIZE]>::new_box_zeroed()?,
             sector: u32::MAX,
             pos: 0,
             verify: options.validate_hashes,
