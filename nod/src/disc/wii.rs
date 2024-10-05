@@ -21,10 +21,7 @@ use crate::{
         KeyBytes,
     },
     static_assert,
-    util::{
-        div_rem,
-        read::{read_box, read_box_slice},
-    },
+    util::{div_rem, read::read_box_slice},
     Error, OpenOptions, Result, ResultContext,
 };
 
@@ -279,7 +276,6 @@ pub struct PartitionWii {
     sector: u32,
     pos: u64,
     verify: bool,
-    raw_region: Box<[u8; REGION_SIZE]>,
     raw_tmd: Box<[u8]>,
     raw_cert_chain: Box<[u8]>,
     raw_h3_table: Box<[u8]>,
@@ -297,7 +293,6 @@ impl Clone for PartitionWii {
             sector: u32::MAX,
             pos: 0,
             verify: self.verify,
-            raw_region: self.raw_region.clone(),
             raw_tmd: self.raw_tmd.clone(),
             raw_cert_chain: self.raw_cert_chain.clone(),
             raw_h3_table: self.raw_h3_table.clone(),
@@ -314,10 +309,6 @@ impl PartitionWii {
     ) -> Result<Box<Self>> {
         let block_size = inner.block_size();
         let mut reader = PartitionGC::new(inner, disc_header)?;
-
-        // Read region
-        reader.seek(SeekFrom::Start(REGION_OFFSET)).context("Seeking to region offset")?;
-        let raw_region: Box<[u8; REGION_SIZE]> = read_box(&mut reader).context("Reading region")?;
 
         // Read TMD, cert chain, and H3 table
         let offset = partition.start_sector as u64 * SECTOR_SIZE as u64;
@@ -348,7 +339,6 @@ impl PartitionWii {
             sector: u32::MAX,
             pos: 0,
             verify: options.validate_hashes,
-            raw_region,
             raw_tmd,
             raw_cert_chain,
             raw_h3_table,
@@ -498,7 +488,6 @@ impl PartitionBase for PartitionWii {
     fn meta(&mut self) -> Result<Box<PartitionMeta>> {
         self.seek(SeekFrom::Start(0)).context("Seeking to partition header")?;
         let mut meta = read_part_meta(self, true)?;
-        meta.raw_region = Some(self.raw_region.clone());
         meta.raw_ticket = Some(Box::from(self.partition.header.ticket.as_bytes()));
         meta.raw_tmd = Some(self.raw_tmd.clone());
         meta.raw_cert_chain = Some(self.raw_cert_chain.clone());

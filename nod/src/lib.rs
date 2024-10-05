@@ -66,7 +66,8 @@ use std::{
 pub use disc::{
     ApploaderHeader, DiscHeader, DolHeader, FileStream, Fst, Node, NodeKind, OwnedFileStream,
     PartitionBase, PartitionHeader, PartitionKind, PartitionMeta, SignedHeader, Ticket,
-    TicketLimit, TmdHeader, WindowedStream, BI2_SIZE, BOOT_SIZE, GCN_MAGIC, SECTOR_SIZE, WII_MAGIC,
+    TicketLimit, TmdHeader, WindowedStream, BI2_SIZE, BOOT_SIZE, GCN_MAGIC, REGION_SIZE,
+    SECTOR_SIZE, WII_MAGIC,
 };
 pub use io::{
     block::{DiscStream, PartitionInfo},
@@ -208,6 +209,12 @@ impl Disc {
     /// The disc's primary header.
     #[inline]
     pub fn header(&self) -> &DiscHeader { self.reader.header() }
+
+    /// The Wii disc's region information.
+    ///
+    /// **GameCube**: This will return `None`.
+    #[inline]
+    pub fn region(&self) -> Option<&[u8; REGION_SIZE]> { self.reader.region() }
 
     /// Returns extra metadata included in the disc file format, if any.
     #[inline]

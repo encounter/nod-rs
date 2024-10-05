@@ -365,8 +365,6 @@ pub struct PartitionMeta {
     pub raw_fst: Box<[u8]>,
     /// Main binary (main.dol)
     pub raw_dol: Box<[u8]>,
-    /// Disc region info (region.bin, Wii only)
-    pub raw_region: Option<Box<[u8; REGION_SIZE]>>,
     /// Ticket (ticket.bin, Wii only)
     pub raw_ticket: Option<Box<[u8]>>,
     /// TMD (tmd.bin, Wii only)

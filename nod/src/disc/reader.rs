@@ -10,9 +10,10 @@ use super::{
     hashes::{rebuild_hashes, HashTable},
     wii::{PartitionWii, WiiPartEntry, WiiPartGroup, WiiPartitionHeader, WII_PART_GROUP_OFF},
     DiscHeader, PartitionBase, PartitionHeader, PartitionKind, DL_DVD_SIZE, MINI_DVD_SIZE,
-    SL_DVD_SIZE,
+    REGION_SIZE, SL_DVD_SIZE,
 };
 use crate::{
+    disc::wii::REGION_OFFSET,
     io::block::{Block, BlockIO, PartitionInfo},
     util::read::{read_box, read_from, read_vec},
     DiscMeta, Error, OpenOptions, Result, ResultContext, SECTOR_SIZE,
@@ -36,6 +37,7 @@ pub struct DiscReader {
     disc_header: Box<DiscHeader>,
     pub(crate) partitions: Vec<PartitionInfo>,
     hash_tables: Vec<HashTable>,
+    region: Option<[u8; REGION_SIZE]>,
 }
 
 impl Clone for DiscReader {
@@ -52,6 +54,7 @@ impl Clone for DiscReader {
             disc_header: self.disc_header.clone(),
             partitions: self.partitions.clone(),
             hash_tables: self.hash_tables.clone(),
+            region: self.region,
         }
     }
 }
@@ -76,10 +79,13 @@ impl DiscReader {
             disc_header: DiscHeader::new_box_zeroed()?,
             partitions: vec![],
             hash_tables: vec![],
+            region: None,
         };
         let disc_header: Box<DiscHeader> = read_box(&mut reader).context("Reading disc header")?;
         reader.disc_header = disc_header;
         if reader.disc_header.is_wii() {
+            reader.seek(SeekFrom::Start(REGION_OFFSET)).context("Seeking to region info")?;
+            reader.region = Some(read_from(&mut reader).context("Reading region info")?);
             reader.partitions = read_partition_info(&mut reader)?;
             // Rebuild hashes if the format requires it
             if (options.rebuild_encryption || options.validate_hashes) && meta.needs_hash_recovery {
@@ -103,10 +109,16 @@ impl DiscReader {
         self.io.meta().disc_size.unwrap_or_else(|| guess_disc_size(&self.partitions))
     }
 
+    #[inline]
     pub fn header(&self) -> &DiscHeader { &self.disc_header }
 
+    #[inline]
+    pub fn region(&self) -> Option<&[u8; REGION_SIZE]> { self.region.as_ref() }
+
+    #[inline]
     pub fn partitions(&self) -> &[PartitionInfo] { &self.partitions }
 
+    #[inline]
     pub fn meta(&self) -> DiscMeta { self.io.meta() }
 
     /// Opens a new, decrypted partition read stream for the specified partition index.

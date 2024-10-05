@@ -214,7 +214,6 @@ pub(crate) fn read_part_meta(
         raw_apploader: raw_apploader.into_boxed_slice(),
         raw_fst,
         raw_dol: raw_dol.into_boxed_slice(),
-        raw_region: None,
         raw_ticket: None,
         raw_tmd: None,
         raw_cert_chain: None,

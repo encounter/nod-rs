@@ -9,8 +9,7 @@ use std::{
 use argp::FromArgs;
 use itertools::Itertools;
 use nod::{
-    Disc, DiscHeader, Fst, Node, OpenOptions, PartitionBase, PartitionKind, PartitionMeta,
-    ResultContext,
+    Disc, Fst, Node, OpenOptions, PartitionBase, PartitionKind, PartitionMeta, ResultContext,
 };
 use size::{Base, Size};
 use zerocopy::IntoBytes;
@@ -65,38 +64,38 @@ pub fn run(args: Args) -> nod::Result<()> {
                 let mut out_dir = output_dir.clone();
                 out_dir.push(info.kind.dir_name().as_ref());
                 let mut partition = disc.open_partition(info.index)?;
-                extract_partition(header, partition.as_mut(), &out_dir, is_wii, args.quiet)?;
+                extract_partition(&disc, partition.as_mut(), &out_dir, is_wii, args.quiet)?;
             }
         } else if partition.eq_ignore_ascii_case("data") {
             let mut partition = disc.open_partition_kind(PartitionKind::Data)?;
-            extract_partition(header, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+            extract_partition(&disc, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
         } else if partition.eq_ignore_ascii_case("update") {
             let mut partition = disc.open_partition_kind(PartitionKind::Update)?;
-            extract_partition(header, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+            extract_partition(&disc, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
         } else if partition.eq_ignore_ascii_case("channel") {
             let mut partition = disc.open_partition_kind(PartitionKind::Channel)?;
-            extract_partition(header, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+            extract_partition(&disc, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
         } else {
             let idx = partition.parse::<usize>().map_err(|_| "Invalid partition index")?;
             let mut partition = disc.open_partition(idx)?;
-            extract_partition(header, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+            extract_partition(&disc, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
         }
     } else {
         let mut partition = disc.open_partition_kind(PartitionKind::Data)?;
-        extract_partition(header, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
+        extract_partition(&disc, partition.as_mut(), &output_dir, is_wii, args.quiet)?;
     }
     Ok(())
 }
 
 fn extract_partition(
-    header: &DiscHeader,
+    disc: &Disc,
     partition: &mut dyn PartitionBase,
     out_dir: &Path,
     is_wii: bool,
     quiet: bool,
 ) -> nod::Result<()> {
     let meta = partition.meta()?;
-    extract_sys_files(header, meta.as_ref(), out_dir, quiet)?;
+    extract_sys_files(disc, meta.as_ref(), out_dir, quiet)?;
 
     // Extract FST
     let files_dir = out_dir.join("files");
@@ -132,7 +131,7 @@ fn extract_partition(
 }
 
 fn extract_sys_files(
-    header: &DiscHeader,
+    disc: &Disc,
     data: &PartitionMeta,
     out_dir: &Path,
     quiet: bool,
@@ -147,12 +146,13 @@ fn extract_sys_files(
     extract_file(data.raw_dol.as_ref(), &sys_dir.join("main.dol"), quiet)?;
 
     // Wii files
-    if header.is_wii() {
+    let disc_header = disc.header();
+    if disc_header.is_wii() {
         let disc_dir = out_dir.join("disc");
         fs::create_dir_all(&disc_dir)
             .with_context(|| format!("Creating directory {}", display(&disc_dir)))?;
-        extract_file(&header.as_bytes()[..0x100], &disc_dir.join("header.bin"), quiet)?;
-        if let Some(region) = data.raw_region.as_deref() {
+        extract_file(&disc_header.as_bytes()[..0x100], &disc_dir.join("header.bin"), quiet)?;
+        if let Some(region) = disc.region() {
             extract_file(region, &disc_dir.join("region.bin"), quiet)?;
         }
         if let Some(ticket) = data.raw_ticket.as_deref() {
