@@ -152,18 +152,21 @@ fn extract_sys_files(
         fs::create_dir_all(&disc_dir)
             .with_context(|| format!("Creating directory {}", display(&disc_dir)))?;
         extract_file(&header.as_bytes()[..0x100], &disc_dir.join("header.bin"), quiet)?;
-    }
-    if let Some(ticket) = data.raw_ticket.as_deref() {
-        extract_file(ticket, &out_dir.join("ticket.bin"), quiet)?;
-    }
-    if let Some(tmd) = data.raw_tmd.as_deref() {
-        extract_file(tmd, &out_dir.join("tmd.bin"), quiet)?;
-    }
-    if let Some(cert_chain) = data.raw_cert_chain.as_deref() {
-        extract_file(cert_chain, &out_dir.join("cert.bin"), quiet)?;
-    }
-    if let Some(h3_table) = data.raw_h3_table.as_deref() {
-        extract_file(h3_table, &out_dir.join("h3.bin"), quiet)?;
+        if let Some(region) = data.raw_region.as_deref() {
+            extract_file(region, &disc_dir.join("region.bin"), quiet)?;
+        }
+        if let Some(ticket) = data.raw_ticket.as_deref() {
+            extract_file(ticket, &out_dir.join("ticket.bin"), quiet)?;
+        }
+        if let Some(tmd) = data.raw_tmd.as_deref() {
+            extract_file(tmd, &out_dir.join("tmd.bin"), quiet)?;
+        }
+        if let Some(cert_chain) = data.raw_cert_chain.as_deref() {
+            extract_file(cert_chain, &out_dir.join("cert.bin"), quiet)?;
+        }
+        if let Some(h3_table) = data.raw_h3_table.as_deref() {
+            extract_file(h3_table, &out_dir.join("h3.bin"), quiet)?;
+        }
     }
     Ok(())
 }

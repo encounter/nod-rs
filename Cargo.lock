@@ -441,7 +441,7 @@ dependencies = [
 
 [[package]]
 name = "nod"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "adler",
  "aes",
@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "nodtool"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "argp",
  "base16ct",
@@ -1033,18 +1033,18 @@ checksum = "6a5cbf750400958819fb6178eaa83bee5cd9c29a26a40cc241df8c70fdd46984"
 
 [[package]]
 name = "zerocopy"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df7885ffcb82507a0f213c593e77c5f13d12cb96588d4e835ad7e9423ba034db"
+checksum = "dd2e5ce961dea177d282ec084dca2aa411b7411199a68d79eb1beacb305a6cd9"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "930ad75608219e8ffdb8962a5433cb2b30064c7ccb564d3b76c2963390b1e435"
+checksum = "b06304eeddb6081af98ac59db08c868ac197e586086b996d15a86ed70e09a754"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -21,7 +21,10 @@ use crate::{
         KeyBytes,
     },
     static_assert,
-    util::{div_rem, read::read_box_slice},
+    util::{
+        div_rem,
+        read::{read_box, read_box_slice},
+    },
     Error, OpenOptions, Result, ResultContext,
 };
 
@@ -30,6 +33,12 @@ pub(crate) const HASHES_SIZE: usize = 0x400;
 
 /// Size in bytes of the data block in a Wii disc sector (excluding hashes)
 pub(crate) const SECTOR_DATA_SIZE: usize = SECTOR_SIZE - HASHES_SIZE; // 0x7C00
+
+/// Size of the disc region info (region.bin)
+pub const REGION_SIZE: usize = 0x20;
+
+/// Offset of the disc region info
+pub const REGION_OFFSET: u64 = 0x4E000;
 
 // ppki (Retail)
 const RVL_CERT_ISSUER_PPKI_TICKET: &str = "Root-CA00000001-XS00000003";
@@ -270,6 +279,7 @@ pub struct PartitionWii {
     sector: u32,
     pos: u64,
     verify: bool,
+    raw_region: Box<[u8; REGION_SIZE]>,
     raw_tmd: Box<[u8]>,
     raw_cert_chain: Box<[u8]>,
     raw_h3_table: Box<[u8]>,
@@ -287,6 +297,7 @@ impl Clone for PartitionWii {
             sector: u32::MAX,
             pos: 0,
             verify: self.verify,
+            raw_region: self.raw_region.clone(),
             raw_tmd: self.raw_tmd.clone(),
             raw_cert_chain: self.raw_cert_chain.clone(),
             raw_h3_table: self.raw_h3_table.clone(),
@@ -303,6 +314,10 @@ impl PartitionWii {
     ) -> Result<Box<Self>> {
         let block_size = inner.block_size();
         let mut reader = PartitionGC::new(inner, disc_header)?;
+
+        // Read region
+        reader.seek(SeekFrom::Start(REGION_OFFSET)).context("Seeking to region offset")?;
+        let raw_region: Box<[u8; REGION_SIZE]> = read_box(&mut reader).context("Reading region")?;
 
         // Read TMD, cert chain, and H3 table
         let offset = partition.start_sector as u64 * SECTOR_SIZE as u64;
@@ -333,6 +348,7 @@ impl PartitionWii {
             sector: u32::MAX,
             pos: 0,
             verify: options.validate_hashes,
+            raw_region,
             raw_tmd,
             raw_cert_chain,
             raw_h3_table,
@@ -482,6 +498,7 @@ impl PartitionBase for PartitionWii {
     fn meta(&mut self) -> Result<Box<PartitionMeta>> {
         self.seek(SeekFrom::Start(0)).context("Seeking to partition header")?;
         let mut meta = read_part_meta(self, true)?;
+        meta.raw_region = Some(self.raw_region.clone());
         meta.raw_ticket = Some(Box::from(self.partition.header.ticket.as_bytes()));
         meta.raw_tmd = Some(self.raw_tmd.clone());
         meta.raw_cert_chain = Some(self.raw_cert_chain.clone());
