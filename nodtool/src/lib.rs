@@ -16,6 +16,7 @@ pub enum SubCommand {
     // Gen(cmd::gen::Args),
     // GenTest(cmd::r#gen::TestArgs),
     Info(cmd::info::Args),
+    List(cmd::list::Args),
     Verify(cmd::verify::Args),
 }
 
@@ -28,6 +29,7 @@ pub fn run(command: SubCommand) -> nod::Result<()> {
         // SubCommand::Gen(c_args) => cmd::gen::run(c_args),
         // SubCommand::GenTest(c_args) => cmd::r#gen::run_test(c_args),
         SubCommand::Info(c_args) => cmd::info::run(c_args),
+        SubCommand::List(c_args) => cmd::list::run(c_args),
         SubCommand::Verify(c_args) => cmd::verify::run(c_args),
     }
 }

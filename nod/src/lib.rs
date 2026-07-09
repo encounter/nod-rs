@@ -185,6 +185,11 @@ impl From<&str> for Error {
     fn from(s: &str) -> Error { Error::Other(s.to_string()) }
 }
 
+impl From<std::io::Error> for Error {
+    #[inline]
+    fn from(e: std::io::Error) -> Error { Error::Io("IO Error".to_string(), e) }
+}
+
 impl From<String> for Error {
     #[inline]
     fn from(s: String) -> Error { Error::Other(s) }

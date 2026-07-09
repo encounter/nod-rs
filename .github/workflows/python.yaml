@@ -98,14 +98,13 @@ jobs:
         with:
           architecture: ${{ matrix.python_arch }}
           python-version: |
-            3.13t
             3.14t
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
           working-directory: nod
           target: ${{ matrix.target }}
-          args: --release --out dist ${{ matrix.args }} -i python3.13t -i python3.14t
+          args: --release --out dist ${{ matrix.args }} -i python3.14t
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
 
