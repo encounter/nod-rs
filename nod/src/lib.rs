@@ -173,7 +173,7 @@ pub enum Error {
     #[error("disc format error: {0}")]
     DiscFormat(String),
     /// A general I/O error.
-    #[error("{0}")]
+    #[error("{0}: {1}")]
     Io(String, #[source] std::io::Error),
     /// An unknown error.
     #[error("error: {0}")]
