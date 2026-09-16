@@ -133,7 +133,12 @@ impl DiscReader {
 
             DiscReaderData::Wii { partitions, alt_partitions, region }
         } else if disc_header.is_gamecube() {
-            DiscReaderData::GameCube { raw_fst: None }
+            let boot_header = BootHeader::ref_from_bytes(&raw_boot[BB2_OFFSET..])
+                .expect("Invalid boot header alignment");
+            let raw_fst = read_fst(reader.as_mut(), boot_header, false)
+                .inspect_err(|e| warn!("Failed to read GameCube FST: {}", e))
+                .ok();
+            DiscReaderData::GameCube { raw_fst }
         } else {
             return Err(Error::DiscFormat("Invalid disc header".to_string()));
         };
