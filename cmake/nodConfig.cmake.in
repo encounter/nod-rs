@@ -1,7 +1,7 @@
 @PACKAGE_INIT@
 
-set(_nod_libdir "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@")
-set(_nod_incdir "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@")
+set(_nod_libdir "@CMAKE_INSTALL_FULL_LIBDIR@")
+set(_nod_incdir "@CMAKE_INSTALL_FULL_INCLUDEDIR@")
 
 if (NOT TARGET nod::nod_shared AND NOT TARGET nod::nod_static)
     # Shared library
